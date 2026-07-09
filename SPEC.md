@@ -61,10 +61,9 @@ Any dependency declared as:
 - workspace dependency
 - `file:` dependency
 
-must be converted into a staging-local artifact, either by:
+must be converted into a staging-local artifact by:
 
-- copying the package folder
-- packing it into a tarball and referencing that tarball in staging
+- copying the package folder into staging
 
 ### 3.5 Registry dependencies remain registry dependencies
 Packages from npm registry such as `somelib` should remain normal package dependencies in the filtered lockfile, with exact versions copied from the root lockfile.
@@ -114,8 +113,6 @@ The tool must accept at least:
 - `stagingDir`: output directory
 - `installMode`: install strategy, default `npm`
 - `includeDevDependencies`: boolean, default `false`
-- `copyStrategyForWorkspaceDeps`: `copy` or `pack`, default `pack`
-- `copyStrategyForFileDeps`: `copy` or `pack`, default `copy`
 
 ---
 
@@ -173,8 +170,8 @@ The tool must detect dependencies that resolve to workspace packages using any o
 For each reachable workspace dependency:
 
 1. include it in the closure
-2. copy or pack it into the staging folder
-3. rewrite the target workspace package manifest so the dependency points to the staging-local artifact
+2. copy it into the staging folder
+3. rewrite the target workspace package manifest so the dependency points to the staging-local copy
 4. add a corresponding entry to the filtered staging lockfile
 
 The tool must process workspace dependencies recursively.
@@ -187,13 +184,12 @@ The tool must detect file dependencies such as:
 
 - `file:../lib`
 - `file:../../shared/lib`
-- local tarball references if used
 
 For each file dependency:
 
 1. resolve the target package path
-2. copy or pack the dependency into staging
-3. rewrite the dependency reference in the staging manifest so it points to the staging-local copy or tarball
+2. copy the dependency into staging
+3. rewrite the dependency reference in the staging manifest so it points to the staging-local copy
 4. add a corresponding entry to the filtered staging lockfile
 
 File dependencies should be treated similarly to workspace dependencies, except their source is path-based rather than workspace graph based.
@@ -247,7 +243,7 @@ The filtered lockfile must include:
 - exact versions from the root lockfile
 - dependency relationships only for the reachable subgraph
 - integrity and resolved metadata where available
-- local artifact references for workspace/file dependencies
+- local copy references for workspace/file dependencies
 
 The filtered lockfile must omit:
 
@@ -266,7 +262,7 @@ That means the staging root must contain:
 - target package files
 - filtered `package.json`
 - filtered lockfile
-- local copies or tarballs for workspace/file dependencies
+- local copies of workspace/file dependencies
 - a package manager installable graph
 
 The tool may execute install using npm or pnpm as long as:
@@ -349,7 +345,7 @@ Responsible for:
 Responsible for:
 
 - copying target workspace files
-- copying or packing workspace/file dependencies
+- copying workspace/file dependencies
 - rewriting package.json files in staging
 - writing staging metadata
 
@@ -434,7 +430,7 @@ For each inventory item record:
 - source path or resolved version
 - exact version from root lockfile
 - dependency list
-- file copy/pack strategy
+- file copy strategy
 
 ---
 
@@ -442,19 +438,14 @@ For each inventory item record:
 
 For each workspace or file dependency in the inventory:
 
-### If strategy is `copy`
 Copy the package folder into a staging-local package directory.
 
-### If strategy is `pack`
-Pack the package into a tarball and place the tarball into staging.
-
-Then update staging dependency references so the target package and any dependent staging package uses the staging-local artifact reference.
+Then update staging dependency references so the target package and any dependent staging package uses the staging-local copy reference.
 
 Examples:
 
 - `workspace:*` becomes `file:./_staging_deps/lib`
 - `file:../lib` becomes `file:./_staging_deps/lib`
-- tarball reference becomes `file:./_staging_deps/lib-1.2.3.tgz`
 
 The exact form can vary, but the staging root must be self-contained.
 
@@ -566,7 +557,6 @@ StagingInventoryItem {
   stagingPath: string
   stagingReference: string
   dependencies: string[]
-  copyStrategy: "copy" | "pack"
 }
 ```
 
@@ -585,7 +575,7 @@ The exact schema must match the selected package manager’s lockfile format, bu
 - exact versions
 - dependency relationships
 - integrity/resolved metadata
-- staging-local references for workspace/file dependencies
+- staging-local copy references for workspace/file dependencies
 
 ---
 
@@ -595,7 +585,7 @@ The exact schema must match the selected package manager’s lockfile format, bu
 If `foo` depends on `lodash@4` and `somelib` depends on `lodash@3`, the staging lockfile must retain both exact versions.
 
 ## EC2. Workspace dependency with external dependencies
-If `lib` is a workspace package and it depends on `lodash`, the tool must copy or pack `lib` and also include `lib`’s external dependency closure.
+If `lib` is a workspace package and it depends on `lodash`, the tool must copy `lib` and also include `lib`’s external dependency closure.
 
 ## EC3. File dependency chain
 If `foo` depends on `file:../lib` and `lib` depends on `file:../shared`, the tool must recursively resolve and stage both.
@@ -643,10 +633,10 @@ The implementation is correct if all of the following are true:
 Given a monorepo with `foo`, `bar`, and `lib`, if `foo` does not depend on `bar`, then `bar` is absent from the staging folder and filtered lockfile.
 
 ## AC2. Workspace dependency inclusion
-If `foo` depends on workspace `lib`, then `lib` is copied or packed into staging and included in the staging lockfile.
+If `foo` depends on workspace `lib`, then `lib` is copied into staging and included in the staging lockfile.
 
 ## AC3. File dependency inclusion
-If `foo` depends on `file:../lib`, then `lib` is resolved, copied or packed into staging, and referenced from staging `package.json` and staging lockfile.
+If `foo` depends on `file:../lib`, then `lib` is resolved, copied into staging, and referenced from staging `package.json` and staging lockfile.
 
 ## AC4. Registry dependency preservation
 If root lockfile locks `lodash@4.1.1`, staging must use `4.1.1` and must not upgrade to `4.2.0` just because the semver range allows it.
@@ -693,7 +683,7 @@ Returns the set of nodes needed for staging.
 
 ## `materializeLocalDependencies(closure, stagingDir, options)`
 
-Copies or packs workspace and file dependencies into staging.
+Copies workspace and file dependencies into staging.
 
 ## `projectLockfile(rootLockfile, closure, stagingManifestMap)`
 
