@@ -2,86 +2,39 @@
 /** ws-pack command-line interface. */
 
 import * as path from "node:path";
-import { parseArgs } from "node:util";
+
+import { Command, InvalidArgumentError, Option } from "commander";
 
 import { runWsPack } from "./pack.js";
 import type { ArchiveFormat, InstallMode, PackOptions } from "./types.js";
 
-const USAGE = `ws-pack - create a self-contained deployment folder for an npm workspace
-
-Usage:
-  ws-pack --target <workspace> [options]
-
-Options:
-  -t, --target <name>        Target workspace package name (required)
-  -r, --repo <dir>           Monorepo root (default: cwd)
-  -o, --staging <dir>        Staging output directory (default: ./ws-pack-out/<target>)
-  -m, --install <mode>       Install mode: npm-install | npm-ci | none (default: npm-install)
-      --archive <format>     Archive format: none | tgz | zip (default: none)
-      --include-dev          Include the target's devDependencies
-      --include-optional     Include optionalDependencies in the closure
-      --local-deps-dir <dir> Directory (relative to staging) for local deps (default: _staging_deps)
-      --keep-staging         Do not delete an existing staging directory first
-  -h, --help                 Show this help
-`;
-
-interface CliValues {
-  target?: string;
+interface CliOptions {
+  target: string;
   repo?: string;
   staging?: string;
-  install?: string;
-  archive?: string;
-  "include-dev"?: boolean;
-  "include-optional"?: boolean;
-  "local-deps-dir"?: string;
-  "keep-staging"?: boolean;
-  help?: boolean;
+  install: InstallMode;
+  archive: ArchiveFormat;
+  includeDev: boolean;
+  includeOptional: boolean;
+  localDepsDir?: string;
+  keepStaging: boolean;
 }
 
-function parseInstallMode(value: string | undefined): InstallMode {
-  if (value === undefined) {
-    return "npm-install";
-  }
+function parseInstallMode(value: string): InstallMode {
   if (value === "npm-install" || value === "npm-ci" || value === "none") {
     return value;
   }
-  throw new Error(`Invalid --install value "${value}". Expected npm-install, npm-ci, or none.`);
+  throw new InvalidArgumentError("Expected npm-install, npm-ci, or none.");
 }
 
-function parseArchiveFormat(value: string | undefined): ArchiveFormat {
-  if (value === undefined) {
-    return "none";
-  }
+function parseArchiveFormat(value: string): ArchiveFormat {
   if (value === "none" || value === "tgz" || value === "zip") {
     return value;
   }
-  throw new Error(`Invalid --archive value "${value}". Expected none, tgz, or zip.`);
+  throw new InvalidArgumentError("Expected none, tgz, or zip.");
 }
 
-async function main(argv: string[]): Promise<number> {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      target: { type: "string", short: "t" },
-      repo: { type: "string", short: "r" },
-      staging: { type: "string", short: "o" },
-      install: { type: "string", short: "m" },
-      archive: { type: "string" },
-      "include-dev": { type: "boolean" },
-      "include-optional": { type: "boolean" },
-      "local-deps-dir": { type: "string" },
-      "keep-staging": { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-    },
-    allowPositionals: false,
-  });
-  const cli = values as CliValues;
-
-  if (cli.help || !cli.target) {
-    process.stdout.write(USAGE);
-    return cli.help ? 0 : 1;
-  }
-
+async function run(cli: CliOptions): Promise<void> {
   const repoRoot = path.resolve(cli.repo ?? process.cwd());
   const stagingDir = path.resolve(
     cli.staging ?? path.join(process.cwd(), "ws-pack-out", cli.target),
@@ -91,12 +44,12 @@ async function main(argv: string[]): Promise<number> {
     repoRoot,
     targetWorkspace: cli.target,
     stagingDir,
-    installMode: parseInstallMode(cli.install),
-    includeDevDependencies: cli["include-dev"] ?? false,
-    includeOptionalDependencies: cli["include-optional"] ?? false,
-    archive: parseArchiveFormat(cli.archive),
-    localDepsDir: cli["local-deps-dir"],
-    keepExistingStaging: cli["keep-staging"] ?? false,
+    installMode: cli.install,
+    includeDevDependencies: cli.includeDev,
+    includeOptionalDependencies: cli.includeOptional,
+    archive: cli.archive,
+    localDepsDir: cli.localDepsDir,
+    keepExistingStaging: cli.keepStaging,
   };
 
   const result = await runWsPack(options);
@@ -112,17 +65,37 @@ async function main(argv: string[]): Promise<number> {
   for (const warning of result.warnings) {
     process.stderr.write(`  warning: ${warning}\n`);
   }
-  return 0;
 }
 
-main(process.argv.slice(2)).then(
-  (code) => {
-    process.exitCode = code;
-    return undefined;
-  },
-  (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`ws-pack: ${message}\n`);
-    process.exitCode = 1;
-  },
-);
+const program = new Command();
+
+program
+  .name("ws-pack")
+  .description("Create a self-contained deployment folder for an npm workspace")
+  .requiredOption("-t, --target <name>", "Target workspace package name")
+  .option("-r, --repo <dir>", "Monorepo root (default: cwd)")
+  .option("-o, --staging <dir>", "Staging output directory (default: ./ws-pack-out/<target>)")
+  .addOption(
+    new Option("-m, --install <mode>", "Install mode")
+      .argParser(parseInstallMode)
+      .default("npm-install" as InstallMode),
+  )
+  .addOption(
+    new Option("--archive <format>", "Archive format")
+      .argParser(parseArchiveFormat)
+      .default("none" as ArchiveFormat),
+  )
+  .option("--include-dev", "Include the target's devDependencies", false)
+  .option("--include-optional", "Include optionalDependencies in the closure", false)
+  .option("--local-deps-dir <dir>", "Directory (relative to staging) for local deps")
+  .option("--keep-staging", "Do not delete an existing staging directory first", false)
+  .allowExcessArguments(false)
+  .action(async (cli: CliOptions) => {
+    await run(cli);
+  });
+
+program.parseAsync(process.argv).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`ws-pack: ${message}\n`);
+  process.exitCode = 1;
+});

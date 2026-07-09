@@ -3,25 +3,25 @@
   "version": "1.0.0",
   "description": "Creates self-contained deployment archives for npm workspaces.",
   "author": "cnshenj",
-  "type": "module",
-  "main": "out/index.js",
-  "types": "out/index.d.ts",
   "bin": {
     "ws-pack": "out/cli.js"
   },
   "files": [
     "out"
   ],
-  "engines": {
-    "node": ">=24"
-  },
+  "type": "module",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
   "scripts": {
     "build": "tsc",
     "lint": "oxlint -c oxlint.config.mts src tests",
-    "format": "oxfmt -c oxfmt.config.mts src tests",
-    "format:check": "oxfmt -c oxfmt.config.mts --check src tests",
+    "format": "oxfmt -c oxfmt.config.mts src tests package.json",
+    "format:check": "oxfmt -c oxfmt.config.mts --check src tests package.json",
     "test": "node --test --import tsx \"tests/**/*.test.ts\"",
     "ws-pack": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -29,6 +29,9 @@
     "oxlint": "^1.73.0",
     "tsx": "^4.19.0",
     "typescript": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "allowScripts": {
     "esbuild@0.28.1": true
