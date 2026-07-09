@@ -21,6 +21,7 @@
     "ws-pack": "node --import tsx src/cli.ts"
   },
   "dependencies": {
+    "@npmcli/map-workspaces": "^5.0.3",
     "commander": "^15.0.0",
     "npm-packlist": "^10.0.4"
   },

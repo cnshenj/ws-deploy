@@ -2,55 +2,31 @@
 
 import * as path from "node:path";
 
-import { classifyManifest } from "./dependency-classifier.js";
-import type { PackageJson, WorkspaceGraph, WorkspaceNode } from "./types.js";
-import { readManifest } from "./util/fsx.js";
-import { expandWorkspacePatterns } from "./util/glob.js";
+import mapWorkspaces from "@npmcli/map-workspaces";
 
-/** Extract workspace glob patterns from a root manifest. */
-export function getWorkspacePatterns(rootManifest: PackageJson): string[] {
-  const { workspaces } = rootManifest;
-  if (!workspaces) {
-    return [];
-  }
-  if (Array.isArray(workspaces)) {
-    return workspaces;
-  }
-  return workspaces.packages ?? [];
-}
+import { classifyManifest } from "./dependency-classifier.js";
+import type { WorkspaceGraph, WorkspaceNode } from "./types.js";
+import { readManifest } from "./util/fsx.js";
 
 /**
  * Load the workspace graph for a monorepo.
  *
- * Reads the root manifest, expands the `workspaces` patterns, parses each
- * package manifest, and classifies dependency edges against the discovered
- * workspace name set.
+ * Reads the root manifest, resolves the `workspaces` patterns via
+ * `@npmcli/map-workspaces` (npm's own resolver), parses each package manifest,
+ * and classifies dependency edges against the discovered workspace name set.
  */
 export async function loadWorkspaceGraph(repoRoot: string): Promise<WorkspaceGraph> {
   const absRoot = path.resolve(repoRoot);
   const rootManifestPath = path.join(absRoot, "package.json");
   const rootManifest = await readManifest(rootManifestPath);
 
-  const patterns = getWorkspacePatterns(rootManifest);
-  const packageDirs = await expandWorkspacePatterns(absRoot, patterns);
+  const workspaceMap = await mapWorkspaces({ cwd: absRoot, pkg: rootManifest });
+  const workspaceNames = new Set(workspaceMap.keys());
 
-  // First pass: read manifests and collect workspace names.
-  const raw: { dir: string; manifestPath: string; manifest: PackageJson }[] = [];
-  const workspaceNames = new Set<string>();
-  for (const dir of packageDirs) {
+  const nodes = new Map<string, WorkspaceNode>();
+  for (const [name, dir] of workspaceMap) {
     const manifestPath = path.join(dir, "package.json");
     const manifest = await readManifest(manifestPath);
-    if (!manifest.name) {
-      continue; // unnamed packages cannot be referenced as workspace deps
-    }
-    raw.push({ dir, manifestPath, manifest });
-    workspaceNames.add(manifest.name);
-  }
-
-  // Second pass: build classified nodes.
-  const nodes = new Map<string, WorkspaceNode>();
-  for (const { dir, manifestPath, manifest } of raw) {
-    const name = manifest.name as string;
     const classified = classifyManifest(name, manifest, workspaceNames);
     nodes.set(name, {
       name,
