@@ -1,6 +1,6 @@
 /** Installer adapter (SPEC §7.6 / Step 8). npm-only, pluggable seam for future PMs. */
 
-import { spawn } from "node:child_process";
+import { execa } from "execa";
 
 import type { InstallMode } from "./types.js";
 
@@ -10,27 +10,11 @@ export interface InstallerAdapter {
   install(stagingDir: string, mode: InstallMode): Promise<void>;
 }
 
-/**
- * Run a shell command line, inheriting stdio, resolving on exit code 0.
- *
- * `shell: true` is used (required to launch `npm`/`npm.cmd` on Windows). The
- * command line is composed only from fixed literals, so there is no argument
- * injection surface; passing a single string avoids the DEP0190 warning that
- * fires when an args array is combined with `shell: true`.
- */
-function run(commandLine: string, cwd: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(commandLine, { cwd, stdio: "inherit", shell: true });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`\`${commandLine}\` failed with exit code ${code}.`));
-      }
-    });
-  });
-}
+/** npm CLI arguments per install mode. */
+const NPM_ARGS: Record<Exclude<InstallMode, "none">, string[]> = {
+  "npm-ci": ["ci", "--ignore-scripts"],
+  "npm-install": ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+};
 
 /** npm-backed installer. */
 export class NpmInstaller implements InstallerAdapter {
@@ -40,11 +24,9 @@ export class NpmInstaller implements InstallerAdapter {
     if (mode === "none") {
       return;
     }
-    const commandLine =
-      mode === "npm-ci"
-        ? "npm ci --ignore-scripts"
-        : "npm install --ignore-scripts --no-audit --no-fund";
-    await run(commandLine, stagingDir);
+    // execa resolves `npm`/`npm.cmd` across platforms without a shell, and
+    // throws a descriptive error on a non-zero exit code.
+    await execa("npm", NPM_ARGS[mode], { cwd: stagingDir, stdio: "inherit" });
   }
 }
 

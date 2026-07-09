@@ -23,6 +23,7 @@
   "dependencies": {
     "@npmcli/map-workspaces": "^5.0.3",
     "commander": "^15.0.0",
+    "execa": "^9.6.1",
     "npm-package-arg": "^13.0.2",
     "npm-packlist": "^10.0.4",
     "tar": "^7.5.19",
