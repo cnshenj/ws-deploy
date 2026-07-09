@@ -58,7 +58,10 @@ export async function copyPackageDir(
   dest: string,
   manifest: PackageJson,
 ): Promise<void> {
-  const files = await packlist({ path: src, package: manifest, isProjectRoot: true });
+  // npm-packlist accepts a lightweight `{ path, package }` tree at runtime, but
+  // its types model only the full Arborist `Node`, so cast the tree through unknown.
+  const tree = { path: src, package: manifest, isProjectRoot: true };
+  const files = await packlist(tree as unknown as Parameters<typeof packlist>[0]);
   await fs.mkdir(dest, { recursive: true });
   for (const relative of files) {
     const from = path.join(src, relative);

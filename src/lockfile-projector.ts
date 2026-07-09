@@ -1,6 +1,12 @@
 /** Projects the root lockfile into a filtered staging lockfile (SPEC §7.4 / FR7-8, Step 6). */
 
-import type { LockfilePackageEntry, NpmLockfile, PackageJson, RuntimeClosure } from "./types.js";
+import type {
+  DependencyMap,
+  LockfilePackageEntry,
+  NpmLockfile,
+  PackageJson,
+  RuntimeClosure,
+} from "./types.js";
 
 const NODE_MODULES_PREFIX = "node_modules/";
 
@@ -10,23 +16,45 @@ function toStagingKey(rootKey: string): string {
   return idx >= 0 ? rootKey.slice(idx) : rootKey;
 }
 
+/** Drop `undefined` values so an npm dependency map becomes a strict string map. */
+function toStringMap(map: DependencyMap | undefined): Record<string, string> | undefined {
+  if (!map) {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [name, spec] of Object.entries(map)) {
+    if (spec !== undefined) {
+      out[name] = spec;
+    }
+  }
+  return out;
+}
+
 /** Build the root ("") package entry from the rewritten staging manifest. */
 function buildRootEntry(rootManifest: PackageJson): LockfilePackageEntry {
   const entry: LockfilePackageEntry = {
     name: rootManifest.name,
     version: rootManifest.version,
   };
-  if (rootManifest.dependencies) {
-    entry.dependencies = { ...rootManifest.dependencies };
+  const dependencies = toStringMap(rootManifest.dependencies);
+  if (dependencies) {
+    entry.dependencies = dependencies;
   }
-  if (rootManifest.optionalDependencies) {
-    entry.optionalDependencies = { ...rootManifest.optionalDependencies };
+  const optionalDependencies = toStringMap(rootManifest.optionalDependencies);
+  if (optionalDependencies) {
+    entry.optionalDependencies = optionalDependencies;
   }
-  if (rootManifest.peerDependencies) {
-    entry.peerDependencies = { ...rootManifest.peerDependencies };
+  const peerDependencies = toStringMap(rootManifest.peerDependencies);
+  if (peerDependencies) {
+    entry.peerDependencies = peerDependencies;
   }
-  if (rootManifest.bin) {
+  if (typeof rootManifest.bin === "string") {
     entry.bin = rootManifest.bin;
+  } else {
+    const bin = toStringMap(rootManifest.bin);
+    if (bin) {
+      entry.bin = bin;
+    }
   }
   return entry;
 }

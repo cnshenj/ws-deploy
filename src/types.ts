@@ -6,23 +6,13 @@
  * `npm install` with a seeded filtered lockfile).
  */
 
-/** A parsed `package.json` manifest. Only fields ws-pack cares about are typed. */
-export interface PackageJson {
-  name?: string;
-  version?: string;
-  private?: boolean;
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-  peerDependencies?: Record<string, string>;
-  bundleDependencies?: string[];
-  bundledDependencies?: string[];
-  files?: string[];
-  bin?: string | Record<string, string>;
-  scripts?: Record<string, string>;
-  workspaces?: string[] | { packages?: string[] };
-  [key: string]: unknown;
-}
+import type { PackageJson as NpmPackageJson } from "@npmcli/package-json";
+
+/** A parsed `package.json` manifest (npm's canonical `package.json` type). */
+export type PackageJson = NpmPackageJson;
+
+/** A dependency section (`dependencies`, `optionalDependencies`, ...). */
+export type DependencyMap = Partial<Record<string, string>>;
 
 /** How a dependency edge resolves. */
 export type DependencyKind = "workspace" | "file" | "registry" | "peer" | "dev";

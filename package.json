@@ -30,6 +30,10 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/npm-package-arg": "^6.1.4",
+    "@types/npm-packlist": "^7.0.3",
+    "@types/npmcli__map-workspaces": "^3.0.4",
+    "@types/npmcli__package-json": "^4.0.4",
     "@types/yazl": "^3.3.1",
     "oxfmt": "^0.58.0",
     "oxlint": "^1.73.0",

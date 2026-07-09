@@ -48,6 +48,8 @@ function rewriteManifest(
       const local = closure.localDependencies.get(name);
       if (local) {
         next[name] = computeLocalReference(manifestRelDir, local.stagingRelativePath);
+      } else if (spec === undefined) {
+        continue;
       } else if (WORKSPACE_OR_FILE.test(spec)) {
         warnings.push(
           `Dropped unresolved ${section} entry "${name}": "${spec}" ` +

@@ -2,7 +2,13 @@
 
 import npa from "npm-package-arg";
 
-import type { DependencyEdge, DependencyGroup, DependencyKind, PackageJson } from "./types.js";
+import type {
+  DependencyEdge,
+  DependencyGroup,
+  DependencyKind,
+  DependencyMap,
+  PackageJson,
+} from "./types.js";
 
 const WORKSPACE_PROTOCOL = /^workspace:/;
 
@@ -44,7 +50,7 @@ export function classifyDependency(
 /** Build classified edges for one manifest section. */
 export function buildEdges(
   fromPackage: string,
-  section: Record<string, string> | undefined,
+  section: DependencyMap | undefined,
   group: DependencyGroup,
   workspaceNames: ReadonlySet<string>,
 ): DependencyEdge[] {
@@ -53,6 +59,9 @@ export function buildEdges(
   }
   const edges: DependencyEdge[] = [];
   for (const [depName, specifier] of Object.entries(section)) {
+    if (specifier === undefined) {
+      continue;
+    }
     const kind =
       group === "peer"
         ? "peer"
