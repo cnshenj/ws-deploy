@@ -4,8 +4,33 @@
   "description": "Creates self-contained deployment archives for npm workspaces.",
   "author": "cnshenj",
   "type": "module",
-  "main": "index.js",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "bin": {
+    "ws-pack": "out/cli.js"
+  },
+  "files": [
+    "out"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "lint": "oxlint -c oxlint.config.mts src tests",
+    "format": "oxfmt -c oxfmt.config.mts src tests",
+    "format:check": "oxfmt -c oxfmt.config.mts --check src tests",
+    "test": "node --test --import tsx \"tests/**/*.test.ts\"",
+    "ws-pack": "node --import tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0",
+    "tsx": "^4.19.0",
+    "typescript": "^7.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }

@@ -1,0 +1,10 @@
+{
+  // Typecheck-only project for tests. The build (../tsconfig.json) emits src only;
+  // this keeps the tests type-safe against the source without emitting them.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  "include": ["../src/**/*", "**/*"]
+}

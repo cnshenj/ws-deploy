@@ -12,7 +12,7 @@
     "noUncheckedIndexedAccess": true,
 
     // Modules
-    "module": "esnext",
+    "module": "nodenext",
     "moduleResolution": "nodenext",
     "resolveJsonModule": true,
     "types": ["node"],
