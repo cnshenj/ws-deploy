@@ -12,22 +12,19 @@ import type { ArchiveFormat } from "./types.js";
 /** Fixed timestamp so archives are byte-reproducible (SPEC NFR1). */
 const EPOCH = new Date(0);
 
-/** Recursively collect files under `root` as sorted forward-slash relative paths. */
+/** Collect files under `root` as sorted forward-slash relative paths. */
 async function collectFiles(root: string): Promise<string[]> {
-  const out: string[] = [];
-  async function walk(dir: string, prefix: string): Promise<void> {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        await walk(path.join(dir, entry.name), rel);
-      } else if (entry.isFile()) {
-        out.push(rel);
-      }
+  const entries = await fs.readdir(root, { recursive: true, withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
     }
+    const abs = path.join(entry.parentPath, entry.name);
+    const rel = path.relative(root, abs).split(path.sep).join("/");
+    files.push(rel);
   }
-  await walk(root, "");
-  return out.toSorted((a, b) => a.localeCompare(b));
+  return files.toSorted((a, b) => a.localeCompare(b));
 }
 
 /**
