@@ -1,17 +1,19 @@
 /** Classifies dependency declarations into workspace / file / registry / etc. */
 
+import npa from "npm-package-arg";
+
 import type { DependencyEdge, DependencyGroup, DependencyKind, PackageJson } from "./types.js";
 
 const WORKSPACE_PROTOCOL = /^workspace:/;
-const FILE_PROTOCOL = /^(file:|link:)/;
 
 /**
  * Classify a single dependency specifier.
  *
- * A dependency is treated as a workspace dependency when it uses the
- * `workspace:` protocol or its name matches a known workspace package
- * (npm resolves such names to the local workspace). `file:`/`link:`
- * specifiers are file dependencies. Everything else is a registry dependency.
+ * The `workspace:` protocol and specifiers whose name matches a known workspace
+ * package resolve to workspace dependencies. Local `file:`/`link:` specifiers
+ * (and any other unsupported protocol) are file dependencies. Everything that
+ * `npm-package-arg` resolves as a registry/git/remote/alias spec is treated as
+ * a registry dependency and left for the lockfile to resolve.
  */
 export function classifyDependency(
   depName: string,
@@ -21,7 +23,16 @@ export function classifyDependency(
   if (WORKSPACE_PROTOCOL.test(specifier)) {
     return "workspace";
   }
-  if (FILE_PROTOCOL.test(specifier)) {
+
+  let parsed: npa.Result | undefined;
+  try {
+    parsed = npa.resolve(depName, specifier);
+  } catch {
+    // Unsupported protocol such as `link:` — treat as a local file dependency.
+    return "file";
+  }
+
+  if (parsed.type === "file" || parsed.type === "directory") {
     return "file";
   }
   if (workspaceNames.has(depName)) {
