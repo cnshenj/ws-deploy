@@ -4,6 +4,8 @@ import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import packlist from "npm-packlist";
+
 import type { PackageJson } from "../types.js";
 
 /** Read and parse a JSON file. */
@@ -44,67 +46,27 @@ export async function isDirectory(target: string): Promise<boolean> {
 }
 
 /**
- * Recursively copy a package directory into `dest`.
+ * Copy a package directory into `dest`, honoring npm's own packing rules.
  *
- * `node_modules` is always excluded. When `include` is provided (from a
- * package's `files` allowlist) only matching top-level entries plus the
- * always-included manifest files are copied.
+ * The file set is computed by `npm-packlist`, the same library npm uses for
+ * `npm pack`, so the copy respects the `files` allowlist, `.npmignore` /
+ * `.gitignore`, and npm's always-included files (`package.json`, `README`,
+ * `LICENSE`, etc.). `node_modules` is excluded by npm-packlist's defaults.
  */
-export async function copyPackageDir(src: string, dest: string, include?: string[]): Promise<void> {
+export async function copyPackageDir(
+  src: string,
+  dest: string,
+  manifest: PackageJson,
+): Promise<void> {
+  const files = await packlist({ path: src, package: manifest, isProjectRoot: true });
   await fs.mkdir(dest, { recursive: true });
-  const includeSet = include && include.length > 0 ? normalizeIncludes(include) : undefined;
-  const entries = await fs.readdir(src, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name === "node_modules") {
-      continue;
-    }
-    if (includeSet && !isIncluded(entry.name, includeSet)) {
-      continue;
-    }
-    const from = path.join(src, entry.name);
-    const to = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      await fs.cp(from, to, { recursive: true });
-    } else {
-      await fs.copyFile(from, to);
-    }
+  for (const relative of files) {
+    const from = path.join(src, relative);
+    const to = path.join(dest, relative);
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.copyFile(from, to);
   }
 }
-
-/** Files that must always be copied regardless of a `files` allowlist. */
-const ALWAYS_INCLUDED = new Set([
-  "package.json",
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "readme",
-  "readme.md",
-  "license",
-  "license.md",
-  "licence",
-  "licence.md",
-]);
-
-function normalizeIncludes(include: string[]): Set<string> {
-  const result = new Set<string>();
-  for (const pattern of include) {
-    // Only the first path segment matters for top-level filtering.
-    const trimmed = pattern.replace(/^\.\//, "").replace(/^\//, "");
-    const firstSegment = trimmed.split("/")[0];
-    if (firstSegment) {
-      result.add(firstSegment);
-    }
-  }
-  return result;
-}
-
-function isIncluded(name: string, includeSet: Set<string>): boolean {
-  if (ALWAYS_INCLUDED.has(name.toLowerCase())) {
-    return true;
-  }
-  return includeSet.has(name);
-}
-
-/** Remove a directory tree if it exists. */
 export async function removeDir(target: string): Promise<void> {
   await fs.rm(target, { recursive: true, force: true });
 }

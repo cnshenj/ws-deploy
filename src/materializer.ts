@@ -92,7 +92,7 @@ export async function materialize(
   }
 
   // Copy the target workspace into the staging root.
-  await copyPackageDir(closure.target.path, stagingDir, closure.target.manifest.files);
+  await copyPackageDir(closure.target.path, stagingDir, closure.target.manifest);
 
   // Copy each local dependency.
   for (const local of closure.localDependencies.values()) {
@@ -127,7 +127,7 @@ export async function materialize(
 }
 
 async function copyLocalDependency(local: StagingLocalDependency, dest: string): Promise<void> {
-  await copyPackageDir(local.sourcePath, dest, local.manifest.files);
+  await copyPackageDir(local.sourcePath, dest, local.manifest);
 }
 
 export { stagingSubPath };

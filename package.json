@@ -21,7 +21,8 @@
     "ws-pack": "node --import tsx src/cli.ts"
   },
   "dependencies": {
-    "commander": "^15.0.0"
+    "commander": "^15.0.0",
+    "npm-packlist": "^10.0.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
