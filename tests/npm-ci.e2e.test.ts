@@ -5,11 +5,14 @@ import { createServer, type Server } from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { execa } from "execa";
 
-import { runWsDeploy } from "../src/deploy.js";
 import type { NpmLockfile, PackageJson } from "../src/types.js";
+
+const PROJECT_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const CLI_PATH = path.join(PROJECT_ROOT, "src/cli.ts");
 
 async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -86,8 +89,8 @@ async function assertMissing(file: string): Promise<void> {
   await assert.rejects(fs.access(file));
 }
 
-describe("npm ci deployment E2E", () => {
-  it("installs the projected closure with exact nested versions and excludes unrelated packages", async () => {
+describe("ws-deploy CLI E2E", () => {
+  it("runs npm ci with exact nested versions and excludes unrelated packages", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npm-ci-"));
     const tarballs = new Map<string, string>();
     const { server, origin } = await startTarballServer(tarballs);
@@ -175,21 +178,39 @@ describe("npm ci deployment E2E", () => {
       const sourceLockfile = await readJson<NpmLockfile>(path.join(root, "package-lock.json"));
       const deployDir = path.join(root, "deployment");
 
-      const result = await runWsDeploy({
-        repoRoot: root,
-        targetWorkspace: "fixture-app",
-        deployDir,
-        installMode: "npm-ci",
-        includeDevDependencies: true,
-      });
+      const cli = await execa(
+        "node",
+        [
+          "--import",
+          "tsx",
+          CLI_PATH,
+          "--target",
+          "fixture-app",
+          "--repo",
+          root,
+          "--deploy-dir",
+          deployDir,
+          "--install",
+          "npm-ci",
+          "--include-dev",
+        ],
+        {
+          cwd: PROJECT_ROOT,
+        },
+      );
+      const projectedLockfile = await readJson<NpmLockfile>(
+        path.join(deployDir, "package-lock.json"),
+      );
 
-      assert.equal(result.warnings.length, 0);
+      assert.match(cli.stdout, /Deployment ready:/);
+      assert.match(cli.stdout, /local deps: 2, registry packages: 5/);
+      assert.equal(cli.stderr, "");
       assert.equal(
-        result.lockfile.packages["node_modules/fixture-consumer-a"]?.integrity,
+        projectedLockfile.packages["node_modules/fixture-consumer-a"]?.integrity,
         sourceLockfile.packages["node_modules/fixture-consumer-a"]?.integrity,
       );
       assert.equal(
-        result.lockfile.packages["node_modules/fixture-consumer-b"]?.integrity,
+        projectedLockfile.packages["node_modules/fixture-consumer-b"]?.integrity,
         sourceLockfile.packages["node_modules/fixture-consumer-b"]?.integrity,
       );
 
