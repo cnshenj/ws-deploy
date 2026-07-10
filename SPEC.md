@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Build a tool that creates a **self-contained archives** for npm workspaces.
+Build a tool that produces a **self-contained deployment folder** (optionally archived) for a single npm-workspace package.
 
 The tool must:
 
@@ -11,7 +11,7 @@ The tool must:
 3. Discover and process **file dependencies** such as `file:../lib`.
 4. Project the root `package-lock.json` into a **filtered staging lockfile** that contains only the dependency closure of the target workspace.
 5. Preserve the exact dependency versions from the root lockfile.
-6. Install or materialize all runtime dependencies into the staging folder without including unrelated workspaces such as `bar`.
+6. Install or materialize all runtime dependencies into the staging folder without including unrelated workspaces.
 
 ---
 
@@ -46,14 +46,16 @@ The **root `package-lock.json`** is the source of truth for exact versions and r
 The tool must **not** let the package manager choose newer compatible versions during staging install.
 
 ### 3.3 Graph projection, not path translation
-The tool must not simply map root `node_modules` paths into staging paths.
-
-Instead, it must:
+**The single most important rule: never "move" root lockfile entries into staging by path
+substitution.** Instead, the tool must:
 
 - compute the dependency closure of the target workspace
-- project that closure into a new staging dependency graph
+- project that closure into a *new* staging dependency graph
 - emit a filtered lockfile for that graph
 - install or materialize from that filtered lockfile
+
+This projection is the only robust way to support workspace deps, file deps, multiple versions
+of the same package, exact-version fidelity, and exclusion of unrelated workspaces.
 
 ### 3.4 Workspace and file dependencies are materialized locally
 Any dependency declared as:
@@ -95,7 +97,10 @@ unless the deploy mode explicitly requests them.
 The set of all packages reachable from the target workspace via runtime dependency edges.
 
 ### 4.4 Staging root
-The directory created for deployment, where the target workspace becomes the effective root package.
+The directory created for deployment. The **target workspace is the root package** of this
+directory: its (rewritten) `package.json` is the root manifest, placed at the top level of the
+staging folder — not nested under a `packages/*` path. The deployment folder and any archive
+produced from it are rooted at the target workspace.
 
 ### 4.5 Filtered lockfile
 A new lockfile generated for the staging root that contains only the dependency graph reachable from the target workspace.
@@ -106,13 +111,17 @@ A new lockfile generated for the staging root that contains only the dependency 
 
 ## FR1. Input parameters
 
-The tool must accept at least:
+The tool accepts:
 
-- `repoRoot`: path to monorepo root
-- `targetWorkspace`: workspace package name, for example `foo`
-- `stagingDir`: output directory
-- `installMode`: install strategy, default `npm`
+- `repoRoot`: path to monorepo root (default: cwd)
+- `targetWorkspace`: workspace package name, for example `foo` (required)
+- `stagingDir`: output directory (default: `./ws-pack-out/<target>`)
+- `installMode`: `npm-install` (default), `npm-ci`, or `none`
 - `includeDevDependencies`: boolean, default `false`
+- `includeOptionalDependencies`: boolean, default `false`
+- `archive`: `none` (default), `tgz`, or `zip`
+- `localDepsDir`: staging-relative directory for local deps (default: `_staging_deps`)
+- `keepExistingStaging`: boolean, default `false` (when true, do not wipe an existing staging dir)
 
 ---
 
@@ -198,11 +207,13 @@ File dependencies should be treated similarly to workspace dependencies, except 
 
 ## FR6. Build the runtime dependency closure
 
-Starting from the target workspace, the tool must recursively traverse only runtime edges:
+Starting from the target workspace, the tool recursively traverses only runtime edges
+(see §4.2): `dependencies`, plus `optionalDependencies` when `includeOptionalDependencies`
+is set, plus `devDependencies` of the target only when `includeDevDependencies` is set.
 
-- `dependencies`
-- `optionalDependencies` if enabled for target platform
-- peer dependencies only for validation and required resolution, not as direct edges unless the package manifest requires them
+Peer dependencies are **not** traversed as edges. Because the root lockfile is the source of
+truth (§3.1), any peer that is actually installed already appears as a normal lockfile entry
+and is included through registry traversal; ws-pack does not separately re-validate peers.
 
 The closure must include:
 
@@ -251,13 +262,18 @@ The filtered lockfile must omit:
 - unrelated registry packages
 - unrelated dependency branches
 
+When one name has several demanded versions, their placement (which version sits at the
+staging root vs. nested under a consumer) follows the greedy most-used rule in §8.1.
+
 ---
 
 ## FR9. Reconstruct installable staging tree
 
 The tool must ensure the staging folder is installable as a standalone package root.
 
-That means the staging root must contain:
+The **target workspace is the root of the staging folder**: its rewritten `package.json` is
+written at the top level (the lockfile's `""` root entry), and its runtime dependencies live
+beneath it. The staging root must contain:
 
 - target package files
 - filtered `package.json`
@@ -265,11 +281,12 @@ That means the staging root must contain:
 - local copies of workspace/file dependencies
 - a package manager installable graph
 
-The tool may execute install using npm or pnpm as long as:
+Install is performed by npm (`npm ci`/`npm install`) behind a pluggable `InstallerAdapter`
+seam (see NFR5). Whichever backend runs must:
 
-- the filtered lockfile is honored
-- no new semver resolution is introduced
-- the resulting installation reproduces the selected exact versions
+- honor the filtered lockfile
+- introduce no new semver resolution
+- reproduce the selected exact versions
 
 ---
 
@@ -281,7 +298,9 @@ The tool must optionally create an archive, for example:
 - `.tgz`
 - or a deploy folder ready for packaging
 
-The archive must contain only the staging closure of the target workspace and its runtime dependencies.
+The archive must contain only the staging closure of the target workspace and its runtime
+dependencies, and must be **rooted at the target workspace** — the target's `package.json`
+sits at the archive root, with dependencies beneath it.
 
 ---
 
@@ -300,216 +319,80 @@ The output must not include unrelated workspaces or dependencies.
 The tool must never modify the source monorepo files in place.
 
 ## NFR5. Extensibility
-The package manager backend should be pluggable so future support for npm, pnpm, or yarn is possible.
+The package-manager backend is a pluggable `InstallerAdapter`. npm is the only implemented
+backend today; the seam keeps future pnpm/yarn support possible without changing the pipeline.
 
 ---
 
-# 7. High-Level Architecture
+# 7. Architecture and interfaces
 
-The tool should be divided into the following modules:
+Each module maps to one internal interface:
 
-## 7.1 Workspace Graph Loader
-Responsible for:
-
-- reading root workspace configuration
-- discovering workspace packages
-- parsing package.json files
-- building workspace dependency graph
-
-## 7.2 Dependency Classifier
-Responsible for classifying dependency edges as:
-
-- workspace dependency
-- file dependency
-- registry dependency
-- peer dependency
-- dev dependency
-
-## 7.3 Closure Resolver
-Responsible for:
-
-- starting from the target workspace
-- traversing runtime dependencies recursively
-- collecting the exact set of packages needed for staging
-
-## 7.4 Lockfile Projector
-Responsible for:
-
-- reading root package-lock.json
-- extracting only entries reachable from the closure
-- preserving exact versions and metadata
-- rewriting local references for workspace/file dependencies
-- writing filtered staging lockfile
-
-## 7.5 Staging Materializer
-Responsible for:
-
-- copying target workspace files
-- copying workspace/file dependencies
-- rewriting package.json files in staging
-- writing staging metadata
-
-## 7.6 Installer Adapter
-Responsible for:
-
-- running the chosen package manager install in staging
-- respecting the staging lockfile
-- avoiding semver re-resolution
+| Module | Responsibility | Interface |
+| --- | --- | --- |
+| Workspace Graph Loader | Read workspace config, discover packages, parse manifests, build the graph | `loadWorkspaceGraph(repoRoot)`; `resolveTargetWorkspace(graph, target)` |
+| Dependency Classifier | Classify each edge as workspace / file / registry / peer / dev | `classifyDependency(name, specifier, workspaceNames)` |
+| Closure Resolver | Traverse runtime edges from the target, collect local + registry packages | `computeRuntimeClosure(graph, lockfile, target, options)` |
+| Lockfile Projector | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(rootLockfile, closure, rootManifest)` |
+| Staging Materializer | Copy target + local deps, rewrite manifests to staging-local `file:` refs | `materialize(closure, options)` |
+| Installer Adapter | Run the chosen PM install honoring the lockfile, no re-resolution | `getInstaller().install(stagingDir, mode)` |
+| Validator | Check staging is complete and installable before archiving | `validateStaging(stagingDir, closure, options)` |
+| Archiver | Package the staging folder | `createArchive(stagingDir, format, outPath)` |
 
 ---
 
-# 8. Detailed Algorithm
+# 8. Pipeline
 
-## Step 1. Load monorepo metadata
+The run is a fixed sequence of stages; each maps to a requirement above.
 
-Read:
+1. **Load** — read root `package.json`, root `package-lock.json`, and workspace manifests; build the graph (FR2).
+2. **Resolve target** — locate the target node; fail early if missing (FR1, §11).
+3. **Compute closure** — traverse runtime edges, classifying each as workspace / file / registry (FR4–FR6).
+4. **Materialize** — copy the target and every local dep into `<localDepsDir>/<name>`, and rewrite manifests so workspace/`file:` specifiers become staging-local `file:` refs; e.g. `workspace:*` and `file:../lib` both become `file:./_staging_deps/lib` (FR3–FR5, §3.4).
+5. **Project lockfile** — emit the filtered staging lockfile: exact versions from the root lockfile, local deps as `link` entries, unrelated packages omitted, placement per §8.1 (FR7, FR8).
+6. **Install** — when `installMode !== none`, run npm honoring the filtered lockfile (FR9).
+7. **Validate** — check the staging tree before archiving (FR9, §11).
+8. **Archive** — when `archive !== none`, package the staging folder (FR10).
 
-- root `package.json`
-- root `package-lock.json`
-- workspace package manifests
-- any workspace configuration used by npm
+## 8.1 Registry placement — greedy most-used hoisting
 
-Build a workspace registry:
+FR7/FR8 require that every consumer resolves the *exact* locked version it demanded and
+that all demanded versions of a name are retained. When a name has more than one demanded
+version, the projector must decide which single version is placed at the staging root
+`node_modules/<name>` and which versions are nested under the specific consumers that need
+them. The staging root is a *new* root (the target workspace), so the monorepo's original
+layout must not be reused; the layout is recomputed from the closure.
 
-- package name
-- version
-- path
-- manifest
-- direct dependencies
-- dev dependencies
-- peer dependencies
-- optional dependencies
+The placement rule is **greedy most-used hoisting**:
 
----
+1. **Choose the root version of each name.** For every registry package name in the closure:
+   - If the staging root package directly depends on that name, the root version is the
+     version the root demands. **Root direct dependencies always win**, even if a different
+     version is more common in the closure.
+   - Otherwise, choose the **most-used version**: the version demanded by the greatest number
+     of consumers, counting every dependency edge in the closure (top-level demands plus every
+     transitive registry edge) that requires each version.
+   - Ties (equal counts) are broken deterministically by ascending version order (NFR1).
 
-## Step 2. Resolve target workspace
+2. **Place each demand relative to its consumer scope.** For a demand of `name@version` made
+   by a consumer at scope `S` (the staging root is scope `""`; a nested package's scope is its
+   own `node_modules` directory):
+   - Walk from `S` up its ancestor scopes to the root. The **nearest ancestor scope that
+     already hosts `name`** is reused when its hosted version equals `version`; if that
+     ancestor hosts a *different* version, `version` must nest directly under the consumer `S`.
+   - If no ancestor yet hosts `name`, the package hoists to the root when `version` equals the
+     chosen root version; otherwise it nests directly under the consumer `S`.
 
-Given `targetWorkspace = foo`:
+3. **One version per scope.** A given scope's `node_modules` hosts at most one version of any
+   name. Reaching a second version for the same scope is an internal error.
 
-- locate the package.json for `foo`
-- verify it exists in workspace registry
-- load its manifest
+4. **Recurse from the placement scope.** After a package is placed at scope `T`, its own
+   registry dependencies are placed relative to `T` (in a stable, sorted order), so conflicts
+   deeper in the graph nest under the package that introduced them.
 
-If the target workspace does not exist, fail early.
-
----
-
-## Step 3. Compute runtime dependency closure
-
-Walk the dependency graph recursively starting from `foo`.
-
-For each dependency edge:
-
-### Case A. Workspace dependency
-If dependency references another workspace package, include that workspace package in the closure and continue traversal from it.
-
-### Case B. File dependency
-If dependency is `file:...`, resolve the path, treat it as a package node, include it in the closure, and continue traversal from it.
-
-### Case C. Registry dependency
-If dependency is from the registry, include it if it is reachable from the runtime graph and continue traversal using the root lockfile metadata.
-
-### Case D. Dev dependency
-Ignore unless `includeDevDependencies` is true.
-
----
-
-## Step 4. Build staging inventory
-
-Produce a staging inventory containing:
-
-- target workspace package
-- all reachable workspace dependencies
-- all reachable file dependencies
-- all reachable registry dependencies from the lockfile
-
-For each inventory item record:
-
-- package name
-- source type
-- source path or resolved version
-- exact version from root lockfile
-- dependency list
-- file copy strategy
-
----
-
-## Step 5. Materialize workspace and file dependencies
-
-For each workspace or file dependency in the inventory:
-
-Copy the package folder into a staging-local package directory.
-
-Then update staging dependency references so the target package and any dependent staging package uses the staging-local copy reference.
-
-Examples:
-
-- `workspace:*` becomes `file:./_staging_deps/lib`
-- `file:../lib` becomes `file:./_staging_deps/lib`
-
-The exact form can vary, but the staging root must be self-contained.
-
----
-
-## Step 6. Project root lockfile to staging lockfile
-
-Create a new lockfile representing only the dependency closure of `foo`.
-
-For each dependency in the closure:
-
-1. find the exact resolved version in the root lockfile
-2. include the package entry in the staging lockfile
-3. preserve dependency edges
-4. omit unrelated packages
-5. rewrite local references for workspace/file dependencies to staging-local references
-
-If the same package name appears multiple times with different resolved versions in the closure, keep all required versions as distinct entries according to the lockfile schema.
-
----
-
-## Step 7. Rewrite staging `package.json`
-
-The staging root `package.json` must be rewritten so that:
-
-- the target package is the effective root
-- workspace dependencies are replaced with staging-local references
-- file dependencies are replaced with staging-local references
-- registry dependencies keep their semver declarations or are pinned according to the staging strategy
-
-If the install strategy requires exact versions in staging, the rewritten manifest may pin them to exact versions.
-
----
-
-## Step 8. Install in staging
-
-Run the selected installer in the staging directory.
-
-Rules:
-
-- it must use the filtered staging lockfile
-- it must not resolve unrelated dependencies
-- it must not pull in `bar`
-- it must not upgrade locked versions
-- it must honor local staging references for workspace/file dependencies
-
----
-
-## Step 9. Validate output
-
-Before archiving, validate:
-
-- the target workspace exists in staging
-- all direct runtime dependencies are present
-- all workspace/file dependencies were materialized
-- no unrelated workspaces exist in staging
-- critical package versions match the root lockfile selections
-- the staging tree is installable or already installed
-
----
-
-## Step 10. Archive staging folder
-
-Package the staging folder as the deployable artifact.
+This produces a deterministic, npm-compatible layout: the most-used (or root-pinned) version
+is shared at the root, and every conflicting minority version is nested under exactly the
+consumers that demand it.
 
 ---
 
@@ -537,52 +420,60 @@ WorkspaceNode {
 DependencyEdge {
   fromPackage: string
   depName: string
-  specifier: string
-  type: "workspace" | "file" | "registry" | "peer" | "dev"
+  specifier: string            // e.g. "^4.0.0", "workspace:*", "file:../lib"
+  kind: "workspace" | "file" | "registry" | "peer" | "dev"
+  group: "prod" | "optional" | "peer" | "dev"   // originating manifest section
   resolvedVersion?: string
   resolvedPath?: string
-  lockfileKey?: string
 }
 ```
 
-## 9.3 StagingInventoryItem
+## 9.3 Closure artifacts
+
+The closure is not a flat inventory; it is a `RuntimeClosure`:
 
 ```text
-StagingInventoryItem {
-  name: string
-  sourceType: "workspace" | "file" | "registry"
-  sourcePath?: string
-  sourceVersion?: string
-  exactVersion?: string
-  stagingPath: string
-  stagingReference: string
-  dependencies: string[]
+RuntimeClosure {
+  target: WorkspaceNode
+  localDependencies: Map<name, StagingLocalDependency>   // workspace/file deps to copy
+  registryPackages: Map<"name@version", ClosureRegistryPackage>
+  topDemands: RegistryDemand[]   // { location, instanceKey } direct registry demands
+  warnings: string[]
+}
+
+StagingLocalDependency {
+  name; sourceType: "workspace" | "file"; sourcePath; version; manifest
+  stagingRelativePath   // e.g. "_staging_deps/lib"
+  stagingReference      // e.g. "file:./_staging_deps/lib"
+}
+
+ClosureRegistryPackage {
+  name; version; lockfileKey; dependencies: string[]   // "name@version" instance keys
 }
 ```
 
-## 9.4 FilteredLockfile
+## 9.4 Filtered lockfile
+
+An npm lockfile v3 document (`lockfileVersion` copied from the root when ≥ 2, else 3):
 
 ```text
 FilteredLockfile {
-  lockfileVersion: number
-  packages: Record<string, LockfilePackageEntry>
-  dependencies?: Record<string, DependencyEntry>
+  name; version; lockfileVersion; requires: true
+  packages: Record<string, LockfilePackageEntry>   // "" is the staging root
 }
 ```
 
-The exact schema must match the selected package manager’s lockfile format, but the conceptual model must preserve:
-
-- exact versions
-- dependency relationships
-- integrity/resolved metadata
-- staging-local copy references for workspace/file dependencies
+Local deps appear as a `link` entry plus a target entry; registry packages carry exact
+`version`/`resolved`/`integrity` copied from the root lockfile. The legacy top-level
+`dependencies` map (lockfile v1) is not emitted.
 
 ---
 
 # 10. Edge Cases
 
 ## EC1. Multiple versions of the same package
-If `foo` depends on `lodash@4` and `somelib` depends on `lodash@3`, the staging lockfile must retain both exact versions.
+If `foo` depends on `lodash@4` and `somelib` depends on `lodash@3`, the staging lockfile
+retains both exact versions, placed per §8.1 (FR7).
 
 ## EC2. Workspace dependency with external dependencies
 If `lib` is a workspace package and it depends on `lodash`, the tool must copy `lib` and also include `lib`’s external dependency closure.
@@ -591,7 +482,9 @@ If `lib` is a workspace package and it depends on `lodash`, the tool must copy `
 If `foo` depends on `file:../lib` and `lib` depends on `file:../shared`, the tool must recursively resolve and stage both.
 
 ## EC4. Peer dependencies
-Peer dependencies must be validated during closure resolution. If unresolved peers are required for runtime, the tool must fail with a clear error.
+Peer dependencies are not traversed or re-validated (FR6). Installed peers are already
+present as registry entries in the root lockfile and are picked up by normal traversal.
+(Explicit peer-conflict validation is a possible future feature, not a current guarantee.)
 
 ## EC5. Optional dependencies
 Optional dependencies should be included only if the deployment target platform requires them or if the policy says to include them.
@@ -601,27 +494,37 @@ If a package requires build output to execute, the staging process must include 
 
 ---
 
-# 11. Error Handling Requirements
+# 11. Error handling
 
-The tool must fail with explicit errors for:
+## 11.1 Hard errors (abort the run)
 
 - target workspace not found
-- workspace dependency path cannot be resolved
-- file dependency points outside repo and is disallowed
-- root lockfile missing or inconsistent
-- exact version cannot be found in root lockfile
-- peer dependency conflict in staging closure
-- staging lockfile generation failed
-- install failed in staging
-- a dependency is reachable at runtime but not present in filtered lockfile
+- a workspace dependency does not resolve to a known workspace package
+- a `file:` dependency has no `package.json` at the resolved path
+- root lockfile missing, or has no `packages` map
+- **a required runtime dependency is reachable but has no entry in the root lockfile** — the
+  lockfile is out of sync with the manifests; omitting it would ship a broken artifact (§3.1)
+- a placement invariant is violated (two versions demanded for one scope)
+- staging validation fails (missing root manifest, an un-materialized local dep, or — after
+  install — a local dep missing from `node_modules`)
+- the installer exits non-zero
 
-Error messages must include:
+Messages should name the dependency, the offending path or parent package, and the reason.
 
-- dependency name
-- package path
-- parent package
-- failure reason
-- suggested fix
+## 11.2 Warnings (recorded, non-fatal)
+
+- an **optional** dependency is not found in the root lockfile → omitted (legitimate for
+  platform-specific optionals)
+- a manifest entry references a workspace/`file:` package outside the closure → dropped from
+  the rewritten manifest
+
+## 11.3 Optional policies (not enforced by default)
+
+- **Out-of-repo file dependencies.** A `file:` specifier that resolves outside the monorepo
+  root is staged as-is today. Because it depends on a path not under the repo's version
+  control, it can break reproducibility (NFR1/NFR2); a future opt-in policy may reject such
+  dependencies. It is not a hard error by default, since some setups legitimately reference
+  sibling checkouts.
 
 ---
 
@@ -629,8 +532,10 @@ Error messages must include:
 
 The implementation is correct if all of the following are true:
 
-## AC1. Workspace exclusion
-Given a monorepo with `foo`, `bar`, and `lib`, if `foo` does not depend on `bar`, then `bar` is absent from the staging folder and filtered lockfile.
+## AC1. Unrelated workspace exclusion
+Given a monorepo with `foo`, `bar`, and `lib`, if `foo` does not depend on `bar`, then `bar`
+— its files, dependencies, and lockfile entries — is absent from the staging folder and the
+filtered lockfile.
 
 ## AC2. Workspace dependency inclusion
 If `foo` depends on workspace `lib`, then `lib` is copied into staging and included in the staging lockfile.
@@ -645,88 +550,21 @@ If root lockfile locks `lodash@4.1.1`, staging must use `4.1.1` and must not upg
 If `foo` depends on `somelib` and `somelib` depends on `lodash@3`, then the staging graph must include both `somelib` and `lodash@3`.
 
 ## AC6. Multiple version support
-If both `foo` and `somelib` require different locked versions of `lodash`, both versions must be present in the filtered staging lockfile.
-
-## AC7. No unrelated workspace leakage
-The staging artifact must not contain `bar`, its dependencies, or any unrelated workspace files.
+If both `foo` and `somelib` require different locked versions of `lodash`, both versions must be present in the filtered staging lockfile (see FR7, EC1).
 
 ---
 
-# 13. Recommended Implementation Strategy
+# 13. Implementation notes
 
-For a coding AI agent, the safest implementation strategy is:
+Build in dependency order, because projection and materialization need an accurate graph:
 
-1. Implement workspace discovery and graph building first.
-2. Implement runtime closure traversal second.
-3. Implement file/workspace dependency materialization third.
-4. Implement lockfile projection fourth.
-5. Implement staging install fifth.
-6. Add validation and archive generation last.
+1. Workspace discovery and graph building.
+2. Runtime closure traversal.
+3. File/workspace dependency materialization.
+4. Lockfile projection (including placement, §8.1).
+5. Staging install.
+6. Validation and archiving.
 
-This order is important because lockfile projection and staging materialization depend on an accurate dependency graph.
-
----
-
-# 14. Suggested Internal Interfaces
-
-## `loadWorkspaceGraph(repoRoot)`
-
-Returns a graph of workspace nodes and their dependencies.
-
-## `resolveTargetWorkspace(graph, targetWorkspace)`
-
-Returns the resolved workspace node.
-
-## `computeRuntimeClosure(graph, targetWorkspace, options)`
-
-Returns the set of nodes needed for staging.
-
-## `materializeLocalDependencies(closure, stagingDir, options)`
-
-Copies workspace and file dependencies into staging.
-
-## `projectLockfile(rootLockfile, closure, stagingManifestMap)`
-
-Returns a filtered lockfile for the staging graph.
-
-## `rewriteStagingManifests(closure, stagingManifestMap)`
-
-Writes rewritten package.json files for staging.
-
-## `installStagingDependencies(stagingDir, installMode)`
-
-Runs the package manager install in staging.
-
-## `validateStagingOutput(stagingDir, closure)`
-
-Checks output correctness before archive.
-
-## `archiveStagingDir(stagingDir, outputPath)`
-
-Creates the final package.
-
----
-
-# 15. Notes for the Coding AI Agent
-
-The most important implementation rule is this:
-
-> Do not attempt to “move” the root lockfile entries into staging by path substitution.
-
-Instead:
-
-1. compute the reachable dependency subgraph
-2. preserve exact versions from root lockfile
-3. materialize local dependencies into staging
-4. generate a filtered lockfile for the subgraph
-5. install from the filtered lockfile in staging
-
-That is the only robust way to support:
-
-- workspace dependencies
-- file dependencies
-- multiple versions of the same package
-- exact version fidelity
-- exclusion of unrelated workspaces
-
----
+The overriding rule is stated in §3.3: project the reachable subgraph into a new lockfile —
+never path-substitute root lockfile entries. That is what makes workspace deps, file deps,
+multiple versions of one package, exact-version fidelity, and workspace exclusion all work.
