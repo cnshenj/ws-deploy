@@ -6,7 +6,7 @@ import mapWorkspaces from "@npmcli/map-workspaces";
 
 import { classifyManifest } from "./dependency-classifier.js";
 import type { WorkspaceGraph, WorkspaceNode } from "./types.js";
-import { readManifest } from "./util/fsx.js";
+import { readManifest } from "./filesystem.js";
 
 /**
  * Load the workspace graph for a monorepo.

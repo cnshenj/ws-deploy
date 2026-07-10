@@ -3,7 +3,7 @@
 import * as path from "node:path";
 
 import type { LockfilePackageEntry, NpmLockfile } from "./types.js";
-import { pathExists, readJson } from "./util/fsx.js";
+import { pathExists, readJson } from "./filesystem.js";
 
 /** Load the root npm lockfile. Throws when missing. */
 export async function loadRootLockfile(repoRoot: string): Promise<NpmLockfile> {

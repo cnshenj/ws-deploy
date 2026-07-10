@@ -14,7 +14,7 @@ import type {
   WorkspaceNode,
 } from "./types.js";
 import { classifyManifest } from "./dependency-classifier.js";
-import { readManifest } from "./util/fsx.js";
+import { readManifest } from "./filesystem.js";
 import { resolveLockfileEntry } from "./lockfile.js";
 
 const LOCAL_PACKAGES_DIR = "local-packages";

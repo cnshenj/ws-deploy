@@ -6,7 +6,7 @@ import * as path from "node:path";
 
 import packlist from "npm-packlist";
 
-import type { PackageJson } from "../types.js";
+import type { PackageJson } from "./types.js";
 
 /** Read and parse a JSON file. */
 export async function readJson<T = unknown>(filePath: string): Promise<T> {

@@ -3,7 +3,7 @@
 import * as path from "node:path";
 
 import type { RuntimeClosure } from "./types.js";
-import { pathExists } from "./util/fsx.js";
+import { pathExists } from "./filesystem.js";
 
 export interface ValidationResult {
   ok: boolean;

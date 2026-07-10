@@ -13,7 +13,7 @@ import {
   type DeployOptions,
   type DeployResult,
 } from "./types.js";
-import { writeJson } from "./util/fsx.js";
+import { writeJson } from "./filesystem.js";
 import { validateDeployment } from "./validate.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js";
 

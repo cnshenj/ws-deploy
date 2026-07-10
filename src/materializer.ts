@@ -3,7 +3,7 @@
 import * as path from "node:path";
 
 import type { PackageJson, DeployOptions, RuntimeClosure, DeployLocalDependency } from "./types.js";
-import { copyPackageDir, isDirectory, removeDir, writeJson } from "./util/fsx.js";
+import { copyPackageDir, isDirectory, removeDir, writeJson } from "./filesystem.js";
 
 export interface MaterializeResult {
   /** The rewritten deployment root manifest. */
