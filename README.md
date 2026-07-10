@@ -1,0 +1,228 @@
+# ws-deploy
+
+Create a self-contained deployment folder for one workspace package in a multi-workspace npm
+monorepo.
+
+`ws-deploy` computes the target package's runtime dependency closure, copies local workspace and
+`file:` dependencies, projects the root lockfile into a minimal staging lockfile, and installs the
+result as a standalone package root. Unrelated workspaces and their dependency branches are left
+out.
+
+## Requirements
+
+- Node.js 24 or later
+- An npm monorepo containing multiple workspaces
+- A root `package-lock.json` or `npm-shrinkwrap.json` with a `packages` map (lockfile version 2 or
+  later)
+- Runtime build output already present when a package publishes built files such as `dist/`
+
+The root lockfile is the source of truth. If a required runtime dependency is missing from it, run
+`npm install` at the repository root to refresh the lockfile before using `ws-deploy`.
+
+## Installation
+
+Install the package as a development dependency in the workspace root:
+
+```sh
+npm install --save-dev ws-deploy
+```
+
+You can then run it with `npx` or from an npm script.
+
+## Quick start
+
+Deploy the workspace whose `package.json` name is `@acme/api`:
+
+```sh
+npx ws-deploy --target @acme/api
+```
+
+By default, this creates `./ws-deploy-out/@acme/api` and runs `npm ci` there. The resulting folder
+is the deployment root: the target package's rewritten `package.json` is at its top level rather
+than under its original workspace path.
+
+A typical CI invocation uses an explicit output path:
+
+```sh
+npx ws-deploy \
+  --repo . \
+  --target @acme/api \
+  --staging ./artifacts/api
+```
+
+The deployment folder can then be passed to a container build, hosting platform, or separate
+archiving tool.
+
+## CLI reference
+
+```text
+ws-deploy --target <workspace-name> [options]
+```
+
+| Option                   | Description                                                        | Default                    |
+| ------------------------ | ------------------------------------------------------------------ | -------------------------- |
+| `-t, --target <name>`    | Target workspace package name. Required.                           |                            |
+| `-r, --repo <dir>`       | Monorepo root.                                                     | Current directory          |
+| `-o, --staging <dir>`    | Deployment output directory.                                       | `./ws-deploy-out/<target>` |
+| `-m, --install <mode>`   | Installation strategy: `npm-ci`, `npm-install`, or `none`.         | `npm-ci`                   |
+| `--include-dev`          | Include the target workspace's `devDependencies`.                  | `false`                    |
+| `--include-optional`     | Include optional dependencies throughout the closure.              | `false`                    |
+| `--local-deps-dir <dir>` | Staging-relative directory for workspace and `file:` dependencies. | `_staging_deps`            |
+| `--keep-staging`         | Keep the existing staging directory instead of deleting it first.  | `false`                    |
+| `-h, --help`             | Show command help.                                                 |                            |
+
+The target is a package name from a workspace `package.json`, not a filesystem path.
+
+## Install modes
+
+### `npm-ci`
+
+The default and recommended mode for CI/CD. It runs:
+
+```sh
+npm ci --ignore-scripts
+```
+
+`npm ci` requires the projected manifest and lockfile to agree and recreates `node_modules` from
+that lockfile.
+
+### `npm-install`
+
+Runs:
+
+```sh
+npm install --ignore-scripts --no-audit --no-fund
+```
+
+This mode is useful for local workflows that need npm's more permissive install behavior.
+
+### `none`
+
+Skips npm entirely. The package files, rewritten manifests, local dependencies, and filtered
+lockfile are still produced, but `node_modules` is not created. Use this mode to inspect the
+projection or install it in a later build stage:
+
+```sh
+npx ws-deploy --target @acme/api --install none
+```
+
+Both npm-backed modes disable lifecycle scripts. Packages that require `preinstall`, `install`, or
+`postinstall` scripts must be prepared before deployment or handled explicitly by the consuming
+pipeline.
+
+## What gets included
+
+By default, the dependency closure contains:
+
+- The target workspace's `dependencies`
+- Transitive registry dependencies at the exact versions in the root lockfile
+- Reachable workspace dependencies
+- Reachable `file:` and `link:` dependencies
+
+It does not traverse:
+
+- `devDependencies`, unless `--include-dev` is set; only the target's development dependencies are
+  included
+- `optionalDependencies` as closure edges, unless `--include-optional` is set
+- `peerDependencies` as separate graph edges
+- Unrelated workspaces or dependency branches
+
+Package files are selected with npm's pack-list rules. This respects the package's `files` field,
+`.npmignore` or `.gitignore`, and npm's always-included files while excluding `node_modules`.
+Build the target and its local dependencies first if their runtime output is generated.
+
+## Output layout
+
+For a target that depends on a local package named `@acme/lib`, the default output resembles:
+
+```text
+ws-deploy-out/@acme/api/
+|-- package.json
+|-- package-lock.json
+|-- node_modules/                 # omitted with --install none
+|-- _staging_deps/
+|   `-- @acme/
+|       `-- lib/
+|           `-- package.json
+`-- ...target package files
+```
+
+Workspace protocols and local path references are rewritten to staging-local `file:` references.
+For example, `workspace:*` becomes `file:./_staging_deps/@acme/lib` in the root manifest. Registry
+packages remain registry dependencies, with their exact `version`, `resolved`, and `integrity`
+metadata copied from the root lockfile where available.
+
+The generated lockfile may place shared versions at the staging root and conflicting versions
+under their consumers. Placement is recalculated for the target's dependency closure rather than
+copied from the monorepo's `node_modules` layout.
+
+## Programmatic API
+
+The package also exports `runWsDeploy` and its TypeScript types:
+
+```ts
+import * as path from "node:path";
+
+import { runWsDeploy } from "ws-deploy";
+
+const result = await runWsDeploy({
+  repoRoot: process.cwd(),
+  targetWorkspace: "@acme/api",
+  stagingDir: path.resolve("artifacts/api"),
+  // installMode defaults to "npm-ci"
+});
+
+console.log(result.stagingDir);
+console.log(result.warnings);
+```
+
+Unlike the CLI, the programmatic API requires `repoRoot`, `targetWorkspace`, and `stagingDir`.
+Optional settings are:
+
+```ts
+interface DeployOptions {
+  repoRoot: string;
+  targetWorkspace: string;
+  stagingDir: string;
+  installMode?: "npm-ci" | "npm-install" | "none";
+  includeDevDependencies?: boolean;
+  includeOptionalDependencies?: boolean;
+  localDepsDir?: string;
+  keepExistingStaging?: boolean;
+}
+```
+
+The resolved closure and projected lockfile are returned for tooling that needs to inspect the
+result.
+
+## Current scope
+
+- npm is the only package-manager backend currently implemented.
+- Packaging the deployment folder into `.zip` or `.tgz` is intentionally out of scope.
+- Peer dependency compatibility is not revalidated.
+- A `file:` dependency outside the repository is allowed, but it can reduce reproducibility.
+
+## Contributors
+
+The detailed behavioral contract and architecture are documented in [SPEC.md](SPEC.md).
+
+Install dependencies and run the checks from the repository root:
+
+```sh
+npm ci
+npm run build
+npm test
+npm run lint
+npm run format:check
+```
+
+Use `npm run format` to apply the configured formatting rules. To run the CLI directly from source
+during development:
+
+```sh
+npm run ws-deploy -- --target <workspace-name> --install none
+```
+
+The main implementation stages live under `src/`: workspace discovery, closure traversal,
+materialization, lockfile projection, installation, and validation. Tests under `tests/` construct
+temporary fixture repositories and must clean up all owned files and directories.
