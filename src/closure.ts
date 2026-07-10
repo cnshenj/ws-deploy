@@ -107,7 +107,7 @@ async function traverseEdge(
       await traverseFile(ctx, edge, fromDir);
       return undefined;
     case "registry":
-      return traverseRegistry(ctx, edge.depName, fromKey);
+      return traverseRegistry(ctx, edge.depName, fromKey, edge.group === "optional");
     default:
       return undefined; // peer/dev handled elsewhere
   }
@@ -203,14 +203,27 @@ function traverseRegistry(
   ctx: ClosureContext,
   depName: string,
   fromKey: string,
+  optional: boolean,
 ): string | undefined {
   const resolved = resolveLockfileEntry(ctx.lockfile, fromKey, depName);
   if (!resolved) {
-    ctx.warnings.push(
-      `Registry dependency "${depName}" (from "${fromKey || "<root>"}") was not found in the ` +
-        `root lockfile; it will be omitted from the filtered lockfile.`,
+    if (optional) {
+      // A missing optional dependency is legitimate (e.g. platform-specific
+      // packages absent from the lockfile for this platform); omit it.
+      ctx.warnings.push(
+        `Optional registry dependency "${depName}" (from "${fromKey || "<root>"}") was not ` +
+          `found in the root lockfile; it will be omitted from the filtered lockfile.`,
+      );
+      return undefined;
+    }
+    // A required runtime dependency with no lockfile entry means the root
+    // lockfile is out of sync with the manifests. Omitting it would ship a
+    // broken artifact, so fail loudly (SPEC §3.1, §11.1).
+    throw new Error(
+      `Runtime dependency "${depName}" (required by "${fromKey || "<root>"}") is reachable at ` +
+        `runtime but has no entry in the root lockfile. package-lock.json is out of sync with ` +
+        `the workspace manifests; run "npm install" at the repo root to refresh it, then retry.`,
     );
-    return undefined;
   }
   const { key, entry } = resolved;
   const version = entry.version ?? "0.0.0";
@@ -227,15 +240,23 @@ function traverseRegistry(
   };
   ctx.registryPackages.set(instanceKey, node);
 
-  // Recurse into transitive registry dependencies from this entry's context.
-  const transitive: Record<string, string> = { ...entry.dependencies };
-  if (ctx.includeOptional && entry.optionalDependencies) {
-    Object.assign(transitive, entry.optionalDependencies);
-  }
-  for (const childName of Object.keys(transitive)) {
-    const childKey = traverseRegistry(ctx, childName, key);
+  // Recurse into required transitive registry dependencies. Optionality is
+  // sticky: the whole subtree under an optional dependency is itself optional.
+  for (const childName of Object.keys(entry.dependencies ?? {})) {
+    const childKey = traverseRegistry(ctx, childName, key, optional);
     if (childKey) {
       node.dependencies.push(childKey);
+    }
+  }
+  if (ctx.includeOptional) {
+    for (const childName of Object.keys(entry.optionalDependencies ?? {})) {
+      if (entry.dependencies && childName in entry.dependencies) {
+        continue; // already traversed as a required child
+      }
+      const childKey = traverseRegistry(ctx, childName, key, true);
+      if (childKey) {
+        node.dependencies.push(childKey);
+      }
     }
   }
   return instanceKey;
