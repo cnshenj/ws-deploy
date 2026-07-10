@@ -194,6 +194,10 @@ function buildRootEntry(rootManifest: PackageJson): LockfilePackageEntry {
   if (dependencies) {
     entry.dependencies = dependencies;
   }
+  const devDependencies = toStringMap(rootManifest.devDependencies);
+  if (devDependencies) {
+    entry.devDependencies = devDependencies;
+  }
   const optionalDependencies = toStringMap(rootManifest.optionalDependencies);
   if (optionalDependencies) {
     entry.optionalDependencies = optionalDependencies;

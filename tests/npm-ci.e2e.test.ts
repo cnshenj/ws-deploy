@@ -115,6 +115,10 @@ describe("npm ci deployment E2E", () => {
         name: "fixture-unrelated-registry",
         version: "9.0.0",
       });
+      const devRegistry = await packPackage(root, tarballs, {
+        name: "fixture-dev-registry",
+        version: "4.0.0",
+      });
 
       await writeJson(path.join(root, "package.json"), {
         name: "fixture-root",
@@ -129,6 +133,10 @@ describe("npm ci deployment E2E", () => {
           "fixture-consumer-b": `${origin}/${consumerB}`,
           "fixture-local-lib": "^1.0.0",
         },
+        devDependencies: {
+          "fixture-dev-local": "^2.0.0",
+          "fixture-dev-registry": `${origin}/${devRegistry}`,
+        },
       });
       await fs.writeFile(
         path.join(root, "packages/app/index.js"),
@@ -142,6 +150,15 @@ describe("npm ci deployment E2E", () => {
       await fs.writeFile(
         path.join(root, "packages/local-lib/index.js"),
         "export const local = 1;\n",
+        "utf8",
+      );
+      await writeJson(path.join(root, "packages/dev-local/package.json"), {
+        name: "fixture-dev-local",
+        version: "2.0.0",
+      });
+      await fs.writeFile(
+        path.join(root, "packages/dev-local/index.js"),
+        "export const dev = 1;\n",
         "utf8",
       );
       await writeJson(path.join(root, "packages/unrelated/package.json"), {
@@ -163,6 +180,7 @@ describe("npm ci deployment E2E", () => {
         targetWorkspace: "fixture-app",
         deployDir,
         installMode: "npm-ci",
+        includeDevDependencies: true,
       });
 
       assert.equal(result.warnings.length, 0);
@@ -187,10 +205,18 @@ describe("npm ci deployment E2E", () => {
       const localLib = await readJson<PackageJson>(
         path.join(deployDir, "node_modules/fixture-local-lib/package.json"),
       );
+      const devLocal = await readJson<PackageJson>(
+        path.join(deployDir, "node_modules/fixture-dev-local/package.json"),
+      );
+      const devRegistryPackage = await readJson<PackageJson>(
+        path.join(deployDir, "node_modules/fixture-dev-registry/package.json"),
+      );
 
       assert.equal(rootShared.version, "1.0.0");
       assert.equal(nestedShared.version, "2.0.0");
       assert.equal(localLib.version, "1.0.0");
+      assert.equal(devLocal.version, "2.0.0");
+      assert.equal(devRegistryPackage.version, "4.0.0");
       await assertMissing(path.join(deployDir, "node_modules/fixture-unrelated-workspace"));
       await assertMissing(path.join(deployDir, "node_modules/fixture-unrelated-registry"));
     } finally {

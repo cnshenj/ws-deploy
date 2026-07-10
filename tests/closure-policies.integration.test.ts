@@ -127,6 +127,19 @@ describe("runtime closure policies", () => {
     assert.deepEqual(closure.warnings, []);
   });
 
+  it("includes target dev dependencies when enabled", async () => {
+    const root = await buildPolicyRepo();
+    cleanups.push(root);
+
+    const closure = await closureFor(root, { includeDevDependencies: true });
+    const registry = [...closure.registryPackages.values()]
+      .map((entry) => `${entry.name}@${entry.version}`)
+      .toSorted();
+
+    assert.deepEqual(registry, ["aliased@1.2.0", "devpkg@2.1.0", "required@1.1.0"]);
+    assert.deepEqual(closure.warnings, []);
+  });
+
   it("fails when a required runtime dependency is absent from the lockfile", async () => {
     const root = await buildPolicyRepo("missing-required");
     cleanups.push(root);

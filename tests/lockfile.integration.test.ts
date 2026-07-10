@@ -44,6 +44,7 @@ describe("lockfile integration", () => {
       version: "1.0.0",
       bin: { app: "cli.js" },
       dependencies: { dep: "^1.0.0" },
+      devDependencies: { devpkg: "^4.0.0" },
       optionalDependencies: { optional: "^2.0.0" },
       peerDependencies: { peer: "^3.0.0" },
     };
@@ -67,6 +68,12 @@ describe("lockfile integration", () => {
             integrity: "sha512-optional",
             optional: true,
           },
+          "node_modules/devpkg": {
+            version: "4.1.0",
+            resolved: "https://r/devpkg-4.1.0.tgz",
+            integrity: "sha512-devpkg",
+            dev: true,
+          },
         },
       },
       manifest,
@@ -79,6 +86,7 @@ describe("lockfile integration", () => {
       targetWorkspace: "app",
       deployDir,
       installMode: "none",
+      includeDevDependencies: true,
       includeOptionalDependencies: true,
     });
 
@@ -87,6 +95,7 @@ describe("lockfile integration", () => {
     assert.equal(result.lockfile.packages["node_modules/dep"]?.resolved, "https://r/dep-1.2.0.tgz");
     assert.equal(result.lockfile.packages["node_modules/dep"]?.integrity, "sha512-dep");
     assert.equal(result.lockfile.packages["node_modules/optional"]?.optional, true);
+    assert.equal(result.lockfile.packages["node_modules/devpkg"]?.dev, true);
   });
 
   it("rejects a legacy lockfile without a packages map", async () => {

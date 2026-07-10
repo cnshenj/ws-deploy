@@ -38,7 +38,14 @@ function rewriteManifest(
   // Deployment root must not be a workspace root itself.
   delete rewritten.workspaces;
 
-  for (const section of ["dependencies", "optionalDependencies"] as const) {
+  const sections: Array<"dependencies" | "optionalDependencies" | "devDependencies"> = [
+    "dependencies",
+    "optionalDependencies",
+  ];
+  if (options.isRoot && options.includeDev) {
+    sections.push("devDependencies");
+  }
+  for (const section of sections) {
     const original = manifest[section];
     if (!original) {
       continue;

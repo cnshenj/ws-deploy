@@ -45,6 +45,10 @@ describe("monorepo structure integration", () => {
         "@acme/lib": "workspace:*",
         "file-a": "file:../../files/file-a",
       },
+      devDependencies: {
+        "@acme/dev-tool": "workspace:*",
+        "file-dev": "file:../../files/file-dev",
+      },
     });
     await writePackage(repo, "groups/platform/packages/lib", {
       name: "@acme/lib",
@@ -55,6 +59,10 @@ describe("monorepo structure integration", () => {
       name: "@acme/shared",
       version: "3.0.0",
     });
+    await writePackage(repo, "libs/dev-tool", {
+      name: "@acme/dev-tool",
+      version: "6.0.0",
+    });
     await writePackage(repo, "files/file-a", {
       name: "file-a",
       version: "4.0.0",
@@ -64,6 +72,10 @@ describe("monorepo structure integration", () => {
       name: "file-b",
       version: "5.0.0",
     });
+    await writePackage(repo, "files/file-dev", {
+      name: "file-dev",
+      version: "7.0.0",
+    });
     await writeJson(path.join(repo, "package-lock.json"), {
       name: "root",
       lockfileVersion: 3,
@@ -72,9 +84,11 @@ describe("monorepo structure integration", () => {
         "services/api": { name: "@acme/api", version: "1.0.0" },
         "groups/platform/packages/lib": { name: "@acme/lib", version: "2.0.0" },
         "libs/shared": { name: "@acme/shared", version: "3.0.0" },
+        "libs/dev-tool": { name: "@acme/dev-tool", version: "6.0.0" },
         "node_modules/@acme/api": { resolved: "services/api", link: true },
         "node_modules/@acme/lib": { resolved: "groups/platform/packages/lib", link: true },
         "node_modules/@acme/shared": { resolved: "libs/shared", link: true },
+        "node_modules/@acme/dev-tool": { resolved: "libs/dev-tool", link: true },
       },
     });
   });
@@ -106,6 +120,7 @@ describe("monorepo structure integration", () => {
     assert.equal(rootManifest.name, "@acme/api");
     assert.equal(rootManifest.dependencies?.["@acme/lib"], "file:./local-packages/@acme/lib");
     assert.equal(rootManifest.dependencies?.["file-a"], "file:./local-packages/file-a");
+    assert.equal(rootManifest.devDependencies, undefined);
 
     const libManifest = await readJson<PackageJson>(
       path.join(deployDir, "local-packages/@acme/lib/package.json"),
@@ -125,5 +140,42 @@ describe("monorepo structure integration", () => {
     });
     assert.equal(result.lockfile.packages["local-packages/@acme/lib"]?.version, "2.0.0");
     assert.equal(result.lockfile.packages["local-packages/file-b"]?.version, "5.0.0");
+  });
+
+  it("materializes and rewrites enabled local dev dependencies", async () => {
+    const result = await runWsDeploy({
+      repoRoot: repo,
+      targetWorkspace: "@acme/api",
+      deployDir,
+      installMode: "none",
+      includeDevDependencies: true,
+    });
+
+    assert.deepEqual([...result.closure.localDependencies.keys()].toSorted(), [
+      "@acme/dev-tool",
+      "@acme/lib",
+      "@acme/shared",
+      "file-a",
+      "file-b",
+      "file-dev",
+    ]);
+
+    const rootManifest = await readJson<PackageJson>(path.join(deployDir, "package.json"));
+    assert.equal(
+      rootManifest.devDependencies?.["@acme/dev-tool"],
+      "file:./local-packages/@acme/dev-tool",
+    );
+    assert.equal(rootManifest.devDependencies?.["file-dev"], "file:./local-packages/file-dev");
+    assert.deepEqual(result.lockfile.packages[""].devDependencies, rootManifest.devDependencies);
+    assert.deepEqual(result.lockfile.packages["node_modules/@acme/dev-tool"], {
+      resolved: "local-packages/@acme/dev-tool",
+      link: true,
+    });
+    assert.deepEqual(result.lockfile.packages["node_modules/file-dev"], {
+      resolved: "local-packages/file-dev",
+      link: true,
+    });
+    await fs.access(path.join(deployDir, "local-packages/@acme/dev-tool/index.js"));
+    await fs.access(path.join(deployDir, "local-packages/file-dev/index.js"));
   });
 });

@@ -13,7 +13,7 @@ import type {
   WorkspaceGraph,
   WorkspaceNode,
 } from "./types.js";
-import { classifyManifest } from "./dependency-classifier.js";
+import { classifyDependency, classifyManifest } from "./dependency-classifier.js";
 import { readManifest } from "./filesystem.js";
 import { resolveLockfileEntry } from "./lockfile.js";
 
@@ -105,8 +105,15 @@ async function traverseEdge(
       return undefined;
     case "registry":
       return traverseRegistry(ctx, edge.depName, fromKey, edge.group === "optional");
+    case "dev":
+      return traverseEdge(
+        ctx,
+        { ...edge, kind: classifyDependency(edge.depName, edge.specifier, workspaceNameSet(ctx)) },
+        fromDir,
+        fromKey,
+      );
     default:
-      return undefined; // peer/dev handled elsewhere
+      return undefined; // peer dependencies are not traversed
   }
 }
 

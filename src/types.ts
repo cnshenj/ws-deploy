@@ -123,6 +123,7 @@ export interface LockfilePackageEntry {
   bin?: string | Record<string, string>;
   engines?: Record<string, string>;
   dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   [key: string]: unknown;
