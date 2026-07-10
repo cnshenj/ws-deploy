@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { runWsPack } from "../src/pack.js";
+import { runWsDeploy } from "../src/deploy.js";
 import type { NpmLockfile } from "../src/types.js";
 
 /** Write a JSON file, creating parent directories. */
@@ -18,7 +18,7 @@ async function buildRepo(
   manifests: Record<string, unknown>,
   lockfile: NpmLockfile,
 ): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-pack-hoist-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-"));
   for (const [dir, manifest] of Object.entries(manifests)) {
     await writeJson(path.join(root, dir, "package.json"), manifest);
     await fs.writeFile(path.join(root, dir, "index.js"), "export default 1;\n", "utf8");
@@ -27,9 +27,9 @@ async function buildRepo(
   return root;
 }
 
-async function pack(root: string, target: string): Promise<NpmLockfile> {
-  const stagingDir = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ws-pack-out-")), "out");
-  const result = await runWsPack({
+async function deploy(root: string, target: string): Promise<NpmLockfile> {
+  const stagingDir = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-out-")), "out");
+  const result = await runWsDeploy({
     repoRoot: root,
     targetWorkspace: target,
     stagingDir,
@@ -85,7 +85,7 @@ describe("projectLockfile hoisting", () => {
     );
     cleanups.push(root);
 
-    const lockfile = await pack(root, "foo");
+    const lockfile = await deploy(root, "foo");
 
     assert.equal(lockfile.packages["node_modules/somelib"]?.version, "1.0.0");
     assert.equal(lockfile.packages["_staging_deps/lib/node_modules/somelib"]?.version, "2.0.0");
@@ -156,7 +156,7 @@ describe("projectLockfile hoisting", () => {
     );
     cleanups.push(root);
 
-    const lockfile = await pack(root, "foo");
+    const lockfile = await deploy(root, "foo");
 
     // Majority version at the root.
     assert.equal(lockfile.packages["node_modules/lodash"]?.version, "4.0.0");

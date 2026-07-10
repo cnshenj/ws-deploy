@@ -1,10 +1,10 @@
 {
-  "name": "ws-pack",
+  "name": "ws-deploy",
   "version": "1.0.0",
   "description": "Creates self-contained deployment folders for npm workspaces.",
   "author": "cnshenj",
   "bin": {
-    "ws-pack": "out/cli.js"
+    "ws-deploy": "out/cli.js"
   },
   "files": [
     "out"
@@ -18,7 +18,7 @@
     "format": "oxfmt -c oxfmt.config.mts src tests package.json",
     "format:check": "oxfmt -c oxfmt.config.mts --check src tests package.json",
     "test": "node --test --import tsx \"tests/**/*.test.ts\"",
-    "ws-pack": "node --import tsx src/cli.ts"
+    "ws-deploy": "node --import tsx src/cli.ts"
   },
   "dependencies": {
     "@npmcli/map-workspaces": "^5.0.3",

@@ -1,7 +1,7 @@
-/** Public entry points for ws-pack (used by the CLI). */
+/** Public entry points for ws-deploy (used by the CLI). */
 
 export * from "./types.js";
-export { runWsPack } from "./pack.js";
+export { runWsDeploy } from "./deploy.js";
 export { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js";
 export { computeRuntimeClosure } from "./closure.js";
 export { projectLockfile } from "./lockfile-projector.js";

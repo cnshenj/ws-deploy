@@ -1,4 +1,4 @@
-/** Orchestrates the full ws-pack pipeline (SPEC §8). */
+/** Orchestrates the full ws-deploy pipeline (SPEC §8). */
 
 import * as path from "node:path";
 
@@ -7,15 +7,15 @@ import { getInstaller } from "./installer.js";
 import { loadRootLockfile } from "./lockfile.js";
 import { projectLockfile } from "./lockfile-projector.js";
 import { materialize } from "./materializer.js";
-import type { InstallMode, PackOptions, PackResult } from "./types.js";
+import type { InstallMode, DeployOptions, DeployResult } from "./types.js";
 import { writeJson } from "./util/fsx.js";
 import { validateStaging } from "./validate.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js";
 
 /**
- * Run ws-pack end to end for a target workspace.
+ * Run ws-deploy end to end for a target workspace.
  */
-export async function runWsPack(options: PackOptions): Promise<PackResult> {
+export async function runWsDeploy(options: DeployOptions): Promise<DeployResult> {
   const installMode: InstallMode = options.installMode ?? "npm-install";
   const warnings: string[] = [];
 

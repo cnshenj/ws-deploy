@@ -14,7 +14,7 @@ export async function loadRootLockfile(repoRoot: string): Promise<NpmLockfile> {
       return readJson<NpmLockfile>(shrinkwrap);
     }
     throw new Error(
-      `Root lockfile not found at ${lockPath}. ws-pack requires a package-lock.json ` +
+      `Root lockfile not found at ${lockPath}. ws-deploy requires a package-lock.json ` +
         `as the source of truth for exact versions.`,
     );
   }

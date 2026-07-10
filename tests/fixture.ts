@@ -22,7 +22,7 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
  * Returns the absolute repo root path.
  */
 export async function buildFixtureRepo(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-pack-fixture-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-fixture-"));
 
   await writeJson(path.join(root, "package.json"), {
     name: "monorepo-root",

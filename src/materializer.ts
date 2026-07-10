@@ -2,7 +2,12 @@
 
 import * as path from "node:path";
 
-import type { PackageJson, PackOptions, RuntimeClosure, StagingLocalDependency } from "./types.js";
+import type {
+  PackageJson,
+  DeployOptions,
+  RuntimeClosure,
+  StagingLocalDependency,
+} from "./types.js";
 import { copyPackageDir, isDirectory, removeDir, writeJson } from "./util/fsx.js";
 
 export interface MaterializeResult {
@@ -82,7 +87,7 @@ function rewriteManifest(
 export async function materialize(
   closure: RuntimeClosure,
   options: Pick<
-    PackOptions,
+    DeployOptions,
     "stagingDir" | "includeDevDependencies" | "localDepsDir" | "keepExistingStaging"
   >,
 ): Promise<MaterializeResult> {

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-/** ws-pack command-line interface. */
+/** ws-deploy command-line interface. */
 
 import * as path from "node:path";
 
 import { Command, InvalidArgumentError, Option } from "commander";
 
-import { runWsPack } from "./pack.js";
-import type { InstallMode, PackOptions } from "./types.js";
+import { runWsDeploy } from "./deploy.js";
+import type { InstallMode, DeployOptions } from "./types.js";
 
 interface CliOptions {
   target: string;
@@ -29,10 +29,10 @@ function parseInstallMode(value: string): InstallMode {
 async function run(cli: CliOptions): Promise<void> {
   const repoRoot = path.resolve(cli.repo ?? process.cwd());
   const stagingDir = path.resolve(
-    cli.staging ?? path.join(process.cwd(), "ws-pack-out", cli.target),
+    cli.staging ?? path.join(process.cwd(), "ws-deploy-out", cli.target),
   );
 
-  const options: PackOptions = {
+  const options: DeployOptions = {
     repoRoot,
     targetWorkspace: cli.target,
     stagingDir,
@@ -43,7 +43,7 @@ async function run(cli: CliOptions): Promise<void> {
     keepExistingStaging: cli.keepStaging,
   };
 
-  const result = await runWsPack(options);
+  const result = await runWsDeploy(options);
 
   process.stdout.write(`\nStaging ready: ${result.stagingDir}\n`);
   process.stdout.write(
@@ -58,11 +58,11 @@ async function run(cli: CliOptions): Promise<void> {
 const program = new Command();
 
 program
-  .name("ws-pack")
+  .name("ws-deploy")
   .description("Create a self-contained deployment folder for an npm workspace")
   .requiredOption("-t, --target <name>", "Target workspace package name")
   .option("-r, --repo <dir>", "Monorepo root (default: cwd)")
-  .option("-o, --staging <dir>", "Staging output directory (default: ./ws-pack-out/<target>)")
+  .option("-o, --staging <dir>", "Staging output directory (default: ./ws-deploy-out/<target>)")
   .addOption(
     new Option("-m, --install <mode>", "Install mode")
       .argParser(parseInstallMode)
@@ -79,6 +79,6 @@ program
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`ws-pack: ${message}\n`);
+  process.stderr.write(`ws-deploy: ${message}\n`);
   process.exitCode = 1;
 });

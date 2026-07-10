@@ -1,4 +1,4 @@
-# Spec: ws-pack
+# Spec: ws-deploy
 
 ## 1. Purpose
 
@@ -116,7 +116,7 @@ The tool accepts:
 
 - `repoRoot`: path to monorepo root (default: cwd)
 - `targetWorkspace`: workspace package name, for example `foo` (required)
-- `stagingDir`: output directory (default: `./ws-pack-out/<target>`)
+- `stagingDir`: output directory (default: `./ws-deploy-out/<target>`)
 - `installMode`: `npm-install` (default), `npm-ci`, or `none`
 - `includeDevDependencies`: boolean, default `false`
 - `includeOptionalDependencies`: boolean, default `false`
@@ -213,7 +213,7 @@ is set, plus `devDependencies` of the target only when `includeDevDependencies` 
 
 Peer dependencies are **not** traversed as edges. Because the root lockfile is the source of
 truth (§3.1), any peer that is actually installed already appears as a normal lockfile entry
-and is included through registry traversal; ws-pack does not separately re-validate peers.
+and is included through registry traversal; ws-deploy does not separately re-validate peers.
 
 The closure must include:
 

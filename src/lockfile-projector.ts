@@ -66,7 +66,7 @@ class RegistryPlacer {
     if (existing !== undefined) {
       // A scope hosts at most one version per name; reaching here is a bug.
       throw new Error(
-        `ws-pack placement conflict: ${node.name}@${existing} vs @${node.version} ` +
+        `ws-deploy placement conflict: ${node.name}@${existing} vs @${node.version} ` +
           `at "${targetScope || "<root>"}".`,
       );
     }

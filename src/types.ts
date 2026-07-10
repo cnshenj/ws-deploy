@@ -1,5 +1,5 @@
 /**
- * Shared data model for ws-pack.
+ * Shared data model for ws-deploy.
  *
  * The conceptual model mirrors SPEC.md §9 but is adapted to the concrete
  * decisions taken for the implementation (npm-only, copy-to-`_staging_deps`,
@@ -110,7 +110,7 @@ export interface RuntimeClosure {
   warnings: string[];
 }
 
-/** An npm lockfile v3 package entry (subset used by ws-pack). */
+/** An npm lockfile v3 package entry (subset used by ws-deploy). */
 export interface LockfilePackageEntry {
   name?: string;
   version?: string;
@@ -128,7 +128,7 @@ export interface LockfilePackageEntry {
   [key: string]: unknown;
 }
 
-/** An npm lockfile v3 document (subset used by ws-pack). */
+/** An npm lockfile v3 document (subset used by ws-deploy). */
 export interface NpmLockfile {
   name?: string;
   version?: string;
@@ -141,8 +141,8 @@ export interface NpmLockfile {
 /** Strategy for producing the staging install. */
 export type InstallMode = "npm-install" | "npm-ci" | "none";
 
-/** Options controlling a ws-pack run. */
-export interface PackOptions {
+/** Options controlling a ws-deploy run. */
+export interface DeployOptions {
   repoRoot: string;
   targetWorkspace: string;
   stagingDir: string;
@@ -155,8 +155,8 @@ export interface PackOptions {
   keepExistingStaging?: boolean;
 }
 
-/** Result of a completed ws-pack run. */
-export interface PackResult {
+/** Result of a completed ws-deploy run. */
+export interface DeployResult {
   stagingDir: string;
   closure: RuntimeClosure;
   lockfile: NpmLockfile;

@@ -1,4 +1,4 @@
-/** Filesystem helpers used across ws-pack. */
+/** Filesystem helpers used across ws-deploy. */
 
 import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";

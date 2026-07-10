@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { runWsPack } from "../src/pack.js";
+import { runWsDeploy } from "../src/deploy.js";
 import type { PackageJson } from "../src/types.js";
 import { buildFixtureRepo, cleanupFixture } from "./fixture.js";
 
@@ -12,13 +12,13 @@ async function readJson<T>(file: string): Promise<T> {
   return JSON.parse(await fs.readFile(file, "utf8")) as T;
 }
 
-describe("runWsPack (installMode none)", () => {
+describe("runWsDeploy (installMode none)", () => {
   let repo: string;
   let stagingDir: string;
 
   before(async () => {
     repo = await buildFixtureRepo();
-    stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-pack-staging-"));
+    stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-staging-"));
     await fs.rm(stagingDir, { recursive: true, force: true });
   });
 
@@ -28,7 +28,7 @@ describe("runWsPack (installMode none)", () => {
   });
 
   it("materializes the staging tree, rewrites manifests, and projects the lockfile", async () => {
-    const result = await runWsPack({
+    const result = await runWsDeploy({
       repoRoot: repo,
       targetWorkspace: "foo",
       stagingDir,

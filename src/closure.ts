@@ -6,7 +6,7 @@ import type {
   ClosureRegistryPackage,
   DependencyEdge,
   NpmLockfile,
-  PackOptions,
+  DeployOptions,
   RegistryDemand,
   RuntimeClosure,
   StagingLocalDependency,
@@ -54,7 +54,7 @@ export async function computeRuntimeClosure(
   lockfile: NpmLockfile,
   target: WorkspaceNode,
   options: Pick<
-    PackOptions,
+    DeployOptions,
     "includeDevDependencies" | "includeOptionalDependencies" | "localDepsDir"
   >,
 ): Promise<RuntimeClosure> {
