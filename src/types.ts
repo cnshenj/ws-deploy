@@ -84,6 +84,16 @@ export interface ClosureRegistryPackage {
   version: string;
   /** Lockfile key in the root lockfile, e.g. `node_modules/lodash`. */
   lockfileKey: string;
+  /** Registry dependency edges as `name@version` instance keys. */
+  dependencies: string[];
+}
+
+/** A direct registry demand from a staging consumer (the root or a local dep). */
+export interface RegistryDemand {
+  /** Staging location of the consumer: `""` for the root, else a local dep path. */
+  location: string;
+  /** The demanded registry package as a `name@version` instance key. */
+  instanceKey: string;
 }
 
 /** The full runtime closure of the target workspace. */
@@ -92,8 +102,10 @@ export interface RuntimeClosure {
   target: WorkspaceNode;
   /** Local (workspace/file) dependencies to copy, keyed by name. */
   localDependencies: Map<string, StagingLocalDependency>;
-  /** Registry packages keyed by `name@version`. */
+  /** Registry packages keyed by `name@version` (the registry dependency graph). */
   registryPackages: Map<string, ClosureRegistryPackage>;
+  /** Direct registry demands from the root package and each local dependency. */
+  topDemands: RegistryDemand[];
   /** Warnings collected during traversal (e.g. unresolved optional deps). */
   warnings: string[];
 }

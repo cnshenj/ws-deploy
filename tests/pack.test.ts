@@ -55,15 +55,18 @@ describe("runWsPack (installMode none)", () => {
     // bar must not leak into staging (AC7).
     await assert.rejects(fs.stat(path.join(stagingDir, "_staging_deps/bar")));
 
-    // Filtered lockfile preserves exact versions and nesting.
+    // Filtered lockfile preserves exact versions; lodash@3 hoists to the root
+    // (its monorepo nesting under somelib was only forced by bar's lodash@4,
+    // which is not part of foo's closure).
     const lockfile = result.lockfile;
     assert.equal(lockfile.packages["node_modules/somelib"]?.version, "1.2.0");
-    assert.equal(lockfile.packages["node_modules/somelib/node_modules/lodash"]?.version, "3.10.1");
+    assert.equal(lockfile.packages["node_modules/lodash"]?.version, "3.10.1");
+    assert.equal(lockfile.packages["node_modules/somelib/node_modules/lodash"], undefined);
     assert.equal(lockfile.packages["node_modules/leftpad"]?.version, "1.3.0");
     assert.equal(lockfile.packages["node_modules/lib"]?.link, true);
     assert.equal(lockfile.packages["node_modules/lib"]?.resolved, "_staging_deps/lib");
-    // Unrelated lodash@4 omitted.
-    assert.equal(lockfile.packages["node_modules/lodash"], undefined);
+    // The unrelated lodash@4 (bar's) is excluded.
+    assert.notEqual(lockfile.packages["node_modules/lodash"]?.version, "4.17.21");
   });
 });
 

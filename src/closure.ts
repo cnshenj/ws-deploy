@@ -7,6 +7,7 @@ import type {
   DependencyEdge,
   NpmLockfile,
   PackOptions,
+  RegistryDemand,
   RuntimeClosure,
   StagingLocalDependency,
   WorkspaceGraph,
@@ -23,8 +24,8 @@ interface ClosureContext {
   includeOptional: boolean;
   registryPackages: Map<string, ClosureRegistryPackage>;
   localDependencies: Map<string, StagingLocalDependency>;
+  topDemands: RegistryDemand[];
   visitedLocal: Set<string>;
-  visitedRegistry: Set<string>;
   warnings: string[];
 }
 
@@ -64,8 +65,8 @@ export async function computeRuntimeClosure(
     includeOptional: options.includeOptionalDependencies ?? false,
     registryPackages: new Map(),
     localDependencies: new Map(),
+    topDemands: [],
     visitedLocal: new Set(),
-    visitedRegistry: new Set(),
     warnings: [],
   };
 
@@ -76,13 +77,18 @@ export async function computeRuntimeClosure(
   }
 
   for (const edge of edges) {
-    await traverseEdge(ctx, edge, target.path, targetKey);
+    // eslint-disable-next-line no-await-in-loop -- traversal order is intentional
+    const instanceKey = await traverseEdge(ctx, edge, target.path, targetKey);
+    if (instanceKey) {
+      ctx.topDemands.push({ location: "", instanceKey });
+    }
   }
 
   return {
     target,
     localDependencies: ctx.localDependencies,
     registryPackages: ctx.registryPackages,
+    topDemands: ctx.topDemands,
     warnings: ctx.warnings,
   };
 }
@@ -92,19 +98,18 @@ async function traverseEdge(
   edge: DependencyEdge,
   fromDir: string,
   fromKey: string,
-): Promise<void> {
+): Promise<string | undefined> {
   switch (edge.kind) {
     case "workspace":
       await traverseWorkspace(ctx, edge);
-      return;
+      return undefined;
     case "file":
       await traverseFile(ctx, edge, fromDir);
-      return;
+      return undefined;
     case "registry":
-      traverseRegistry(ctx, edge.depName, fromKey);
-      return;
+      return traverseRegistry(ctx, edge.depName, fromKey);
     default:
-      return; // peer/dev handled elsewhere
+      return undefined; // peer/dev handled elsewhere
   }
 }
 
@@ -182,7 +187,11 @@ async function addLocalDependency(ctx: ClosureContext, input: LocalInput): Promi
     : classified.dependencies;
   const fromKey = toLockfileKey(ctx.graph.repoRoot, input.sourcePath);
   for (const edge of edges) {
-    await traverseEdge(ctx, edge, input.sourcePath, fromKey);
+    // eslint-disable-next-line no-await-in-loop -- traversal order is intentional
+    const instanceKey = await traverseEdge(ctx, edge, input.sourcePath, fromKey);
+    if (instanceKey) {
+      ctx.topDemands.push({ location: stagingRelativePath, instanceKey });
+    }
   }
 }
 
@@ -190,25 +199,33 @@ function workspaceNameSet(ctx: ClosureContext): ReadonlySet<string> {
   return new Set(ctx.graph.nodes.keys());
 }
 
-function traverseRegistry(ctx: ClosureContext, depName: string, fromKey: string): void {
+function traverseRegistry(
+  ctx: ClosureContext,
+  depName: string,
+  fromKey: string,
+): string | undefined {
   const resolved = resolveLockfileEntry(ctx.lockfile, fromKey, depName);
   if (!resolved) {
     ctx.warnings.push(
       `Registry dependency "${depName}" (from "${fromKey || "<root>"}") was not found in the ` +
         `root lockfile; it will be omitted from the filtered lockfile.`,
     );
-    return;
+    return undefined;
   }
   const { key, entry } = resolved;
-  if (ctx.visitedRegistry.has(key)) {
-    return;
-  }
-  ctx.visitedRegistry.add(key);
-
   const version = entry.version ?? "0.0.0";
-  const closureKey = `${depName}@${version}`;
-  const pkg: ClosureRegistryPackage = { name: depName, version, lockfileKey: key };
-  ctx.registryPackages.set(closureKey, pkg);
+  const instanceKey = `${depName}@${version}`;
+  if (ctx.registryPackages.has(instanceKey)) {
+    return instanceKey;
+  }
+
+  const node: ClosureRegistryPackage = {
+    name: depName,
+    version,
+    lockfileKey: key,
+    dependencies: [],
+  };
+  ctx.registryPackages.set(instanceKey, node);
 
   // Recurse into transitive registry dependencies from this entry's context.
   const transitive: Record<string, string> = { ...entry.dependencies };
@@ -216,6 +233,10 @@ function traverseRegistry(ctx: ClosureContext, depName: string, fromKey: string)
     Object.assign(transitive, entry.optionalDependencies);
   }
   for (const childName of Object.keys(transitive)) {
-    traverseRegistry(ctx, childName, key);
+    const childKey = traverseRegistry(ctx, childName, key);
+    if (childKey) {
+      node.dependencies.push(childKey);
+    }
   }
+  return instanceKey;
 }
