@@ -29,8 +29,8 @@ describe("computeRuntimeClosure", () => {
     assert.equal(closure.localDependencies.get("lib")?.sourceType, "workspace");
     assert.equal(closure.localDependencies.get("shared")?.sourceType, "file");
     assert.equal(
-      closure.localDependencies.get("lib")?.stagingReference,
-      "file:./_staging_deps/lib",
+      closure.localDependencies.get("lib")?.deployReference,
+      "file:./local-packages/lib",
     );
 
     // Registry deps: somelib, its nested lodash@3, and lib's leftpad.

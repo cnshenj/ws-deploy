@@ -9,7 +9,7 @@ import type {
   DeployOptions,
   RegistryDemand,
   RuntimeClosure,
-  StagingLocalDependency,
+  DeployLocalDependency,
   WorkspaceGraph,
   WorkspaceNode,
 } from "./types.js";
@@ -17,13 +17,14 @@ import { classifyManifest } from "./dependency-classifier.js";
 import { readManifest } from "./util/fsx.js";
 import { resolveLockfileEntry } from "./lockfile.js";
 
+const LOCAL_PACKAGES_DIR = "local-packages";
+
 interface ClosureContext {
   graph: WorkspaceGraph;
   lockfile: NpmLockfile;
-  localDepsDir: string;
   includeOptional: boolean;
   registryPackages: Map<string, ClosureRegistryPackage>;
-  localDependencies: Map<string, StagingLocalDependency>;
+  localDependencies: Map<string, DeployLocalDependency>;
   topDemands: RegistryDemand[];
   visitedLocal: Set<string>;
   warnings: string[];
@@ -53,15 +54,11 @@ export async function computeRuntimeClosure(
   graph: WorkspaceGraph,
   lockfile: NpmLockfile,
   target: WorkspaceNode,
-  options: Pick<
-    DeployOptions,
-    "includeDevDependencies" | "includeOptionalDependencies" | "localDepsDir"
-  >,
+  options: Pick<DeployOptions, "includeDevDependencies" | "includeOptionalDependencies">,
 ): Promise<RuntimeClosure> {
   const ctx: ClosureContext = {
     graph,
     lockfile,
-    localDepsDir: options.localDepsDir ?? "_staging_deps",
     includeOptional: options.includeOptionalDependencies ?? false,
     registryPackages: new Map(),
     localDependencies: new Map(),
@@ -157,10 +154,10 @@ async function traverseFile(
 
 interface LocalInput {
   name: string;
-  sourceType: StagingLocalDependency["sourceType"];
+  sourceType: DeployLocalDependency["sourceType"];
   sourcePath: string;
   version: string;
-  manifest: StagingLocalDependency["manifest"];
+  manifest: DeployLocalDependency["manifest"];
 }
 
 async function addLocalDependency(ctx: ClosureContext, input: LocalInput): Promise<void> {
@@ -169,15 +166,15 @@ async function addLocalDependency(ctx: ClosureContext, input: LocalInput): Promi
   }
   ctx.visitedLocal.add(input.name);
 
-  const stagingRelativePath = `${ctx.localDepsDir}/${input.name}`;
+  const deployRelativePath = `${LOCAL_PACKAGES_DIR}/${input.name}`;
   ctx.localDependencies.set(input.name, {
     name: input.name,
     sourceType: input.sourceType,
     sourcePath: input.sourcePath,
     version: input.version,
     manifest: input.manifest,
-    stagingRelativePath,
-    stagingReference: `file:./${stagingRelativePath}`,
+    deployRelativePath,
+    deployReference: `file:./${deployRelativePath}`,
   });
 
   // Recurse into the local dependency's own runtime edges (EC2, EC3).
@@ -190,7 +187,7 @@ async function addLocalDependency(ctx: ClosureContext, input: LocalInput): Promi
     // eslint-disable-next-line no-await-in-loop -- traversal order is intentional
     const instanceKey = await traverseEdge(ctx, edge, input.sourcePath, fromKey);
     if (instanceKey) {
-      ctx.topDemands.push({ location: stagingRelativePath, instanceKey });
+      ctx.topDemands.push({ location: deployRelativePath, instanceKey });
     }
   }
 }

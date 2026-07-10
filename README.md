@@ -4,7 +4,7 @@ Create a self-contained deployment folder for one workspace package in a multi-w
 monorepo.
 
 `ws-deploy` computes the target package's runtime dependency closure, copies local workspace and
-`file:` dependencies, projects the root lockfile into a minimal staging lockfile, and installs the
+`file:` dependencies, projects the root lockfile into a minimal deployment lockfile, and installs the
 result as a standalone package root. Unrelated workspaces and their dependency branches are left
 out.
 
@@ -37,9 +37,9 @@ Deploy the workspace whose `package.json` name is `@acme/api`:
 npx ws-deploy --target @acme/api
 ```
 
-By default, this creates `./ws-deploy-out/@acme/api` and runs `npm ci` there. The resulting folder
-is the deployment root: the target package's rewritten `package.json` is at its top level rather
-than under its original workspace path.
+By default, this creates `./deploy/@acme/api` and runs `npm ci` there. The resulting folder is the
+deployment root: the target package's rewritten `package.json` is at its top level rather than
+under its original workspace path.
 
 A typical CI invocation uses an explicit output path:
 
@@ -47,7 +47,7 @@ A typical CI invocation uses an explicit output path:
 npx ws-deploy \
   --repo . \
   --target @acme/api \
-  --staging ./artifacts/api
+  --deploy-dir ./artifacts/api
 ```
 
 The deployment folder can then be passed to a container build, hosting platform, or separate
@@ -59,17 +59,16 @@ archiving tool.
 ws-deploy --target <workspace-name> [options]
 ```
 
-| Option                   | Description                                                        | Default                    |
-| ------------------------ | ------------------------------------------------------------------ | -------------------------- |
-| `-t, --target <name>`    | Target workspace package name. Required.                           |                            |
-| `-r, --repo <dir>`       | Monorepo root.                                                     | Current directory          |
-| `-o, --staging <dir>`    | Deployment output directory.                                       | `./ws-deploy-out/<target>` |
-| `-m, --install <mode>`   | Installation strategy: `npm-ci`, `npm-install`, or `none`.         | `npm-ci`                   |
-| `--include-dev`          | Include the target workspace's `devDependencies`.                  | `false`                    |
-| `--include-optional`     | Include optional dependencies throughout the closure.              | `false`                    |
-| `--local-deps-dir <dir>` | Staging-relative directory for workspace and `file:` dependencies. | `_staging_deps`            |
-| `--keep-staging`         | Keep the existing staging directory instead of deleting it first.  | `false`                    |
-| `-h, --help`             | Show command help.                                                 |                            |
+| Option                   | Description                                                          | Default             |
+| ------------------------ | -------------------------------------------------------------------- | ------------------- |
+| `-t, --target <name>`    | Target workspace package name. Required.                             |                     |
+| `-r, --repo <dir>`       | Monorepo root.                                                       | Current directory   |
+| `-o, --deploy-dir <dir>` | Deployment output directory.                                         | `./deploy/<target>` |
+| `-m, --install <mode>`   | Installation strategy: `npm-ci`, `npm-install`, or `none`.           | `npm-ci`            |
+| `--include-dev`          | Include the target workspace's `devDependencies`.                    | `false`             |
+| `--include-optional`     | Include optional dependencies throughout the closure.                | `false`             |
+| `--keep-deploy-dir`      | Keep the existing deployment directory instead of deleting it first. | `false`             |
+| `-h, --help`             | Show command help.                                                   |                     |
 
 The target is a package name from a workspace `package.json`, not a filesystem path.
 
@@ -136,23 +135,23 @@ Build the target and its local dependencies first if their runtime output is gen
 For a target that depends on a local package named `@acme/lib`, the default output resembles:
 
 ```text
-ws-deploy-out/@acme/api/
+deploy/@acme/api/
 |-- package.json
 |-- package-lock.json
 |-- node_modules/                 # omitted with --install none
-|-- _staging_deps/
+|-- local-packages/
 |   `-- @acme/
 |       `-- lib/
 |           `-- package.json
 `-- ...target package files
 ```
 
-Workspace protocols and local path references are rewritten to staging-local `file:` references.
-For example, `workspace:*` becomes `file:./_staging_deps/@acme/lib` in the root manifest. Registry
+Workspace protocols and local path references are rewritten to deployment-local `file:` references.
+For example, `workspace:*` becomes `file:./local-packages/@acme/lib` in the root manifest. Registry
 packages remain registry dependencies, with their exact `version`, `resolved`, and `integrity`
 metadata copied from the root lockfile where available.
 
-The generated lockfile may place shared versions at the staging root and conflicting versions
+The generated lockfile may place shared versions at the deployment root and conflicting versions
 under their consumers. Placement is recalculated for the target's dependency closure rather than
 copied from the monorepo's `node_modules` layout.
 
@@ -168,27 +167,26 @@ import { runWsDeploy } from "ws-deploy";
 const result = await runWsDeploy({
   repoRoot: process.cwd(),
   targetWorkspace: "@acme/api",
-  stagingDir: path.resolve("artifacts/api"),
+  deployDir: path.resolve("artifacts/api"),
   // installMode defaults to "npm-ci"
 });
 
-console.log(result.stagingDir);
+console.log(result.deployDir);
 console.log(result.warnings);
 ```
 
-Unlike the CLI, the programmatic API requires `repoRoot`, `targetWorkspace`, and `stagingDir`.
+Unlike the CLI, the programmatic API requires `repoRoot`, `targetWorkspace`, and `deployDir`.
 Optional settings are:
 
 ```ts
 interface DeployOptions {
   repoRoot: string;
   targetWorkspace: string;
-  stagingDir: string;
+  deployDir: string;
   installMode?: "npm-ci" | "npm-install" | "none";
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
-  localDepsDir?: string;
-  keepExistingStaging?: boolean;
+  keepExistingDeployDir?: boolean;
 }
 ```
 

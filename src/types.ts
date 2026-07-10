@@ -2,7 +2,7 @@
  * Shared data model for ws-deploy.
  *
  * The conceptual model mirrors SPEC.md §9 but is adapted to the concrete
- * decisions taken for the implementation (npm-only, copy-to-`_staging_deps`,
+ * decisions taken for the implementation (npm-only, copy-to-`local-packages`,
  * `npm install` with a seeded filtered lockfile).
  */
 
@@ -64,18 +64,18 @@ export interface WorkspaceGraph {
 /** Source classification for a materialized local dependency. */
 export type LocalSourceType = "workspace" | "file";
 
-/** An item that must be materialized (copied) into the staging folder. */
-export interface StagingLocalDependency {
+/** An item that must be materialized (copied) into the deployment folder. */
+export interface DeployLocalDependency {
   name: string;
   sourceType: LocalSourceType;
   /** Absolute path to the source package directory. */
   sourcePath: string;
   version: string;
   manifest: PackageJson;
-  /** Relative staging path, e.g. `_staging_deps/lib`. */
-  stagingRelativePath: string;
-  /** Reference written into dependent manifests, e.g. `file:./_staging_deps/lib`. */
-  stagingReference: string;
+  /** Relative deployment path, e.g. `local-packages/lib`. */
+  deployRelativePath: string;
+  /** Reference written into dependent manifests, e.g. `file:./local-packages/lib`. */
+  deployReference: string;
 }
 
 /** A registry package that belongs to the runtime closure. */
@@ -88,9 +88,9 @@ export interface ClosureRegistryPackage {
   dependencies: string[];
 }
 
-/** A direct registry demand from a staging consumer (the root or a local dep). */
+/** A direct registry demand from a deployment consumer (the root or a local dep). */
 export interface RegistryDemand {
-  /** Staging location of the consumer: `""` for the root, else a local dep path. */
+  /** Deployment location of the consumer: `""` for the root, else a local dep path. */
   location: string;
   /** The demanded registry package as a `name@version` instance key. */
   instanceKey: string;
@@ -98,10 +98,10 @@ export interface RegistryDemand {
 
 /** The full runtime closure of the target workspace. */
 export interface RuntimeClosure {
-  /** The target workspace node (staging root). */
+  /** The target workspace node (deployment root). */
   target: WorkspaceNode;
   /** Local (workspace/file) dependencies to copy, keyed by name. */
-  localDependencies: Map<string, StagingLocalDependency>;
+  localDependencies: Map<string, DeployLocalDependency>;
   /** Registry packages keyed by `name@version` (the registry dependency graph). */
   registryPackages: Map<string, ClosureRegistryPackage>;
   /** Direct registry demands from the root package and each local dependency. */
@@ -138,7 +138,7 @@ export interface NpmLockfile {
   [key: string]: unknown;
 }
 
-/** Strategy for producing the staging install. */
+/** Strategy for producing the deployment install. */
 export type InstallMode = "npm-install" | "npm-ci" | "none";
 
 /** Install strategy used when callers do not specify one. */
@@ -148,19 +148,17 @@ export const DEFAULT_INSTALL_MODE: InstallMode = "npm-ci";
 export interface DeployOptions {
   repoRoot: string;
   targetWorkspace: string;
-  stagingDir: string;
+  deployDir: string;
   installMode?: InstallMode;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
-  /** Fixed directory name (relative to staging root) for local deps. */
-  localDepsDir?: string;
-  /** When true, do not delete an existing staging directory. */
-  keepExistingStaging?: boolean;
+  /** When true, do not delete an existing deployment directory. */
+  keepExistingDeployDir?: boolean;
 }
 
 /** Result of a completed ws-deploy run. */
 export interface DeployResult {
-  stagingDir: string;
+  deployDir: string;
   closure: RuntimeClosure;
   lockfile: NpmLockfile;
   warnings: string[];

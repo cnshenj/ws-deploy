@@ -1,4 +1,4 @@
-/** Projects the root lockfile into a filtered staging lockfile (SPEC §7.4 / FR7-8, Step 6). */
+/** Projects the root lockfile into a filtered deployment lockfile (SPEC §7.4 / FR7-8, Step 6). */
 
 import type {
   ClosureRegistryPackage,
@@ -13,7 +13,7 @@ import type {
 const NODE_MODULES_PREFIX = "node_modules/";
 const NESTED_MARKER = "/node_modules/";
 
-/** The parent hoisting scope of a staging scope directory (root is `""`). */
+/** The parent hoisting scope of a deployment scope directory (root is `""`). */
 function parentScope(scope: string): string {
   const idx = scope.lastIndexOf(NESTED_MARKER);
   // A nested package hoists to its enclosing package; everything else (a
@@ -30,7 +30,7 @@ function placementKey(scope: string, name: string): string {
  * Greedy "most-used" hoisting of the registry dependency graph.
  *
  * Every consumer resolves the exact version pinned in the root lockfile; the
- * most-used version of each name is hoisted to the staging root and conflicting
+ * most-used version of each name is hoisted to the deployment root and conflicting
  * versions are nested under the consumer that needs them. This re-roots the
  * monorepo's layout offline, consistent with npm's lockfile semantics.
  */
@@ -184,7 +184,7 @@ function toStringMap(map: DependencyMap | undefined): Record<string, string> | u
   return out;
 }
 
-/** Build the root ("") package entry from the rewritten staging manifest. */
+/** Build the root ("") package entry from the rewritten deployment manifest. */
 function buildRootEntry(rootManifest: PackageJson): LockfilePackageEntry {
   const entry: LockfilePackageEntry = {
     name: rootManifest.name,
@@ -214,10 +214,10 @@ function buildRootEntry(rootManifest: PackageJson): LockfilePackageEntry {
 }
 
 /**
- * Project the root lockfile into a filtered lockfile for the staging root.
+ * Project the root lockfile into a filtered lockfile for the deployment root.
  *
  * The result contains only the closure: the target as root, local
- * dependencies as `file:` links under the staging deps dir, and every reachable
+ * dependencies as `file:` links under the deployment's local package directory, and every reachable
  * registry package with its exact version/integrity copied from the root
  * lockfile. Unrelated packages are omitted.
  */
@@ -232,13 +232,13 @@ export function projectLockfile(
     "": buildRootEntry(rootManifest),
   };
 
-  // Local (workspace/file) dependencies become staging-local file links.
+  // Local (workspace/file) dependencies become deployment-local file links.
   for (const local of closure.localDependencies.values()) {
     packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
-      resolved: local.stagingRelativePath,
+      resolved: local.deployRelativePath,
       link: true,
     };
-    packages[local.stagingRelativePath] = {
+    packages[local.deployRelativePath] = {
       name: local.name,
       version: local.version,
     };

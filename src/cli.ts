@@ -11,12 +11,11 @@ import { DEFAULT_INSTALL_MODE, type InstallMode, type DeployOptions } from "./ty
 interface CliOptions {
   target: string;
   repo?: string;
-  staging?: string;
+  deployDir?: string;
   install: InstallMode;
   includeDev: boolean;
   includeOptional: boolean;
-  localDepsDir?: string;
-  keepStaging: boolean;
+  keepDeployDir: boolean;
 }
 
 function parseInstallMode(value: string): InstallMode {
@@ -28,24 +27,21 @@ function parseInstallMode(value: string): InstallMode {
 
 async function run(cli: CliOptions): Promise<void> {
   const repoRoot = path.resolve(cli.repo ?? process.cwd());
-  const stagingDir = path.resolve(
-    cli.staging ?? path.join(process.cwd(), "ws-deploy-out", cli.target),
-  );
+  const deployDir = path.resolve(cli.deployDir ?? path.join(process.cwd(), "deploy", cli.target));
 
   const options: DeployOptions = {
     repoRoot,
     targetWorkspace: cli.target,
-    stagingDir,
+    deployDir,
     installMode: cli.install,
     includeDevDependencies: cli.includeDev,
     includeOptionalDependencies: cli.includeOptional,
-    localDepsDir: cli.localDepsDir,
-    keepExistingStaging: cli.keepStaging,
+    keepExistingDeployDir: cli.keepDeployDir,
   };
 
   const result = await runWsDeploy(options);
 
-  process.stdout.write(`\nStaging ready: ${result.stagingDir}\n`);
+  process.stdout.write(`\nDeployment ready: ${result.deployDir}\n`);
   process.stdout.write(
     `  local deps: ${result.closure.localDependencies.size}, ` +
       `registry packages: ${result.closure.registryPackages.size}\n`,
@@ -62,7 +58,7 @@ program
   .description("Create a self-contained deployment folder for an npm workspace")
   .requiredOption("-t, --target <name>", "Target workspace package name")
   .option("-r, --repo <dir>", "Monorepo root (default: cwd)")
-  .option("-o, --staging <dir>", "Staging output directory (default: ./ws-deploy-out/<target>)")
+  .option("-o, --deploy-dir <dir>", "Deployment directory (default: ./deploy/<target>)")
   .addOption(
     new Option("-m, --install <mode>", "Install mode")
       .argParser(parseInstallMode)
@@ -70,8 +66,7 @@ program
   )
   .option("--include-dev", "Include the target's devDependencies", false)
   .option("--include-optional", "Include optionalDependencies in the closure", false)
-  .option("--local-deps-dir <dir>", "Directory (relative to staging) for local deps")
-  .option("--keep-staging", "Do not delete an existing staging directory first", false)
+  .option("--keep-deploy-dir", "Do not delete an existing deployment directory first", false)
   .allowExcessArguments(false)
   .action(async (cli: CliOptions) => {
     await run(cli);

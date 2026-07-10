@@ -11,30 +11,30 @@ export interface ValidationResult {
 }
 
 /**
- * Validate the staging tree before it is used.
+ * Validate the deployment tree before it is used.
  *
- * Checks that the staging root manifest exists, that every local dependency was
+ * Checks that the deployment root manifest exists, that every local dependency was
  * materialized, and (when installed) that direct runtime dependencies are
  * present in `node_modules`.
  */
-export async function validateStaging(
-  stagingDir: string,
+export async function validateDeployment(
+  deployDir: string,
   closure: RuntimeClosure,
   options: { installed: boolean },
 ): Promise<ValidationResult> {
   const errors: string[] = [];
-  const root = path.resolve(stagingDir);
+  const root = path.resolve(deployDir);
 
   if (!(await pathExists(path.join(root, "package.json")))) {
-    errors.push("Staging root package.json is missing.");
+    errors.push("Deployment root package.json is missing.");
   }
 
   // Every local dependency must have been copied.
   for (const local of closure.localDependencies.values()) {
-    const dir = path.join(root, ...local.stagingRelativePath.split("/"));
+    const dir = path.join(root, ...local.deployRelativePath.split("/"));
     if (!(await pathExists(path.join(dir, "package.json")))) {
       errors.push(
-        `Local dependency "${local.name}" was not materialized at ${local.stagingRelativePath}.`,
+        `Local dependency "${local.name}" was not materialized at ${local.deployRelativePath}.`,
       );
     }
   }

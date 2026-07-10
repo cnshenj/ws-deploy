@@ -14,8 +14,8 @@ npm install --no-audit --no-fund
 Pop-Location
 Write-Host "repo=$repo"
 Write-Host "lockfile exists: $(Test-Path "$repo/package-lock.json")"
-node "$PSScriptRoot/../out/cli.js" --target foo --repo $repo --staging "$repo/out" --install npm-install
-Write-Host "---- staging node_modules ----"
+node "$PSScriptRoot/../out/cli.js" --target foo --repo $repo --deploy-dir "$repo/out" --install npm-install
+Write-Host "---- deployment node_modules ----"
 Get-ChildItem "$repo/out/node_modules" | Select-Object -ExpandProperty Name
 Write-Host "bar present:      $(Test-Path "$repo/out/node_modules/bar")"
 Write-Host "left-pad present: $(Test-Path "$repo/out/node_modules/left-pad")"

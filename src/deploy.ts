@@ -14,7 +14,7 @@ import {
   type DeployResult,
 } from "./types.js";
 import { writeJson } from "./util/fsx.js";
-import { validateStaging } from "./validate.js";
+import { validateDeployment } from "./validate.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js";
 
 /**
@@ -35,39 +35,37 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
   const closure = await computeRuntimeClosure(graph, rootLockfile, target, {
     includeDevDependencies: options.includeDevDependencies,
     includeOptionalDependencies: options.includeOptionalDependencies,
-    localDepsDir: options.localDepsDir,
   });
   warnings.push(...closure.warnings);
 
   // Steps 4-5, 7: materialize files and rewrite manifests.
   const materialized = await materialize(closure, {
-    stagingDir: options.stagingDir,
+    deployDir: options.deployDir,
     includeDevDependencies: options.includeDevDependencies,
-    localDepsDir: options.localDepsDir,
-    keepExistingStaging: options.keepExistingStaging,
+    keepExistingDeployDir: options.keepExistingDeployDir,
   });
   warnings.push(...materialized.warnings);
 
-  // Step 6: project the filtered staging lockfile.
+  // Step 6: project the filtered deployment lockfile.
   const lockfile = projectLockfile(rootLockfile, closure, materialized.rootManifest);
-  await writeJson(path.join(path.resolve(options.stagingDir), "package-lock.json"), lockfile);
+  await writeJson(path.join(path.resolve(options.deployDir), "package-lock.json"), lockfile);
 
-  // Step 8: install in staging.
+  // Step 8: install in the deployment directory.
   if (installMode !== "none") {
     const installer = getInstaller();
-    await installer.install(path.resolve(options.stagingDir), installMode);
+    await installer.install(path.resolve(options.deployDir), installMode);
   }
 
   // Step 9: validate.
-  const validation = await validateStaging(path.resolve(options.stagingDir), closure, {
+  const validation = await validateDeployment(path.resolve(options.deployDir), closure, {
     installed: installMode !== "none",
   });
   if (!validation.ok) {
-    throw new Error(`Staging validation failed:\n  - ${validation.errors.join("\n  - ")}`);
+    throw new Error(`Deployment validation failed:\n  - ${validation.errors.join("\n  - ")}`);
   }
 
   return {
-    stagingDir: path.resolve(options.stagingDir),
+    deployDir: path.resolve(options.deployDir),
     closure,
     lockfile,
     warnings,

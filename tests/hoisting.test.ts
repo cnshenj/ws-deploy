@@ -28,11 +28,11 @@ async function buildRepo(
 }
 
 async function deploy(root: string, target: string): Promise<NpmLockfile> {
-  const stagingDir = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-out-")), "out");
+  const deployDir = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-")), "out");
   const result = await runWsDeploy({
     repoRoot: root,
     targetWorkspace: target,
-    stagingDir,
+    deployDir: deployDir,
     installMode: "none",
   });
   return result.lockfile;
@@ -88,7 +88,7 @@ describe("projectLockfile hoisting", () => {
     const lockfile = await deploy(root, "foo");
 
     assert.equal(lockfile.packages["node_modules/somelib"]?.version, "1.0.0");
-    assert.equal(lockfile.packages["_staging_deps/lib/node_modules/somelib"]?.version, "2.0.0");
+    assert.equal(lockfile.packages["local-packages/lib/node_modules/somelib"]?.version, "2.0.0");
     assert.equal(lockfile.packages["node_modules/lib"]?.link, true);
   });
 
@@ -161,10 +161,10 @@ describe("projectLockfile hoisting", () => {
     // Majority version at the root.
     assert.equal(lockfile.packages["node_modules/lodash"]?.version, "4.0.0");
     // Minority nested under its lone consumer.
-    assert.equal(lockfile.packages["_staging_deps/q/node_modules/lodash"]?.version, "3.0.0");
+    assert.equal(lockfile.packages["local-packages/q/node_modules/lodash"]?.version, "3.0.0");
     // The three majority consumers share the root copy (no per-consumer nesting).
-    assert.equal(lockfile.packages["_staging_deps/p1/node_modules/lodash"], undefined);
-    assert.equal(lockfile.packages["_staging_deps/p2/node_modules/lodash"], undefined);
-    assert.equal(lockfile.packages["_staging_deps/p3/node_modules/lodash"], undefined);
+    assert.equal(lockfile.packages["local-packages/p1/node_modules/lodash"], undefined);
+    assert.equal(lockfile.packages["local-packages/p2/node_modules/lodash"], undefined);
+    assert.equal(lockfile.packages["local-packages/p3/node_modules/lodash"], undefined);
   });
 });
