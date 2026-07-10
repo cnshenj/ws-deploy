@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 
 import { runWsDeploy } from "./deploy.js";
-import type { InstallMode, DeployOptions } from "./types.js";
+import { DEFAULT_INSTALL_MODE, type InstallMode, type DeployOptions } from "./types.js";
 
 interface CliOptions {
   target: string;
@@ -66,7 +66,7 @@ program
   .addOption(
     new Option("-m, --install <mode>", "Install mode")
       .argParser(parseInstallMode)
-      .default("npm-install" as InstallMode),
+      .default(DEFAULT_INSTALL_MODE),
   )
   .option("--include-dev", "Include the target's devDependencies", false)
   .option("--include-optional", "Include optionalDependencies in the closure", false)

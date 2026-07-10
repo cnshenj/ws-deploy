@@ -141,6 +141,9 @@ export interface NpmLockfile {
 /** Strategy for producing the staging install. */
 export type InstallMode = "npm-install" | "npm-ci" | "none";
 
+/** Install strategy used when callers do not specify one. */
+export const DEFAULT_INSTALL_MODE: InstallMode = "npm-ci";
+
 /** Options controlling a ws-deploy run. */
 export interface DeployOptions {
   repoRoot: string;

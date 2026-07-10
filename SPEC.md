@@ -117,7 +117,7 @@ The tool accepts:
 - `repoRoot`: path to monorepo root (default: cwd)
 - `targetWorkspace`: workspace package name, for example `foo` (required)
 - `stagingDir`: output directory (default: `./ws-deploy-out/<target>`)
-- `installMode`: `npm-install` (default), `npm-ci`, or `none`
+- `installMode`: `npm-install`, `npm-ci` (default), or `none`
 - `includeDevDependencies`: boolean, default `false`
 - `includeOptionalDependencies`: boolean, default `false`
 - `localDepsDir`: staging-relative directory for local deps (default: `_staging_deps`)

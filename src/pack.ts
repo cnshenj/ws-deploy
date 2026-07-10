@@ -1,4 +1,4 @@
-/** Orchestrates the full ws-deploy pipeline (SPEC §8). */
+/** Orchestrates the full ws-pack pipeline (SPEC §8). */
 
 import * as path from "node:path";
 
@@ -18,7 +18,7 @@ import { validateStaging } from "./validate.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js";
 
 /**
- * Run ws-deploy end to end for a target workspace.
+ * Run ws-pack end to end for a target workspace.
  */
 export async function runWsDeploy(options: DeployOptions): Promise<DeployResult> {
   const installMode: InstallMode = options.installMode ?? DEFAULT_INSTALL_MODE;
