@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { createArchive } from "../src/archive.js";
 import { runWsPack } from "../src/pack.js";
 import type { PackageJson } from "../src/types.js";
 import { buildFixtureRepo, cleanupFixture } from "./fixture.js";
@@ -67,43 +66,5 @@ describe("runWsPack (installMode none)", () => {
     assert.equal(lockfile.packages["node_modules/lib"]?.resolved, "_staging_deps/lib");
     // The unrelated lodash@4 (bar's) is excluded.
     assert.notEqual(lockfile.packages["node_modules/lodash"]?.version, "4.17.21");
-  });
-});
-
-describe("createArchive", () => {
-  let repo: string;
-  let stagingDir: string;
-
-  before(async () => {
-    repo = await buildFixtureRepo();
-    stagingDir = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ws-pack-arc-")), "out");
-    await runWsPack({
-      repoRoot: repo,
-      targetWorkspace: "foo",
-      stagingDir,
-      installMode: "none",
-    });
-  });
-
-  after(async () => {
-    await cleanupFixture(repo);
-    await fs.rm(path.dirname(stagingDir), { recursive: true, force: true });
-  });
-
-  it("writes a zip with the PK signature", async () => {
-    const out = path.join(path.dirname(stagingDir), "foo.zip");
-    await createArchive(stagingDir, "zip", out);
-    const buf = await fs.readFile(out);
-    assert.equal(buf[0], 0x50);
-    assert.equal(buf[1], 0x4b);
-    assert.ok(buf.length > 22);
-  });
-
-  it("writes a gzip-framed tgz", async () => {
-    const out = path.join(path.dirname(stagingDir), "foo.tgz");
-    await createArchive(stagingDir, "tgz", out);
-    const buf = await fs.readFile(out);
-    assert.equal(buf[0], 0x1f);
-    assert.equal(buf[1], 0x8b);
   });
 });

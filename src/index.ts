@@ -6,5 +6,4 @@ export { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js
 export { computeRuntimeClosure } from "./closure.js";
 export { projectLockfile } from "./lockfile-projector.js";
 export { materialize } from "./materializer.js";
-export { createArchive } from "./archive.js";
 export type { InstallerAdapter } from "./installer.js";

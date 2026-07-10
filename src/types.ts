@@ -141,9 +141,6 @@ export interface NpmLockfile {
 /** Strategy for producing the staging install. */
 export type InstallMode = "npm-install" | "npm-ci" | "none";
 
-/** Archive format for the final artifact. */
-export type ArchiveFormat = "none" | "tgz" | "zip";
-
 /** Options controlling a ws-pack run. */
 export interface PackOptions {
   repoRoot: string;
@@ -152,7 +149,6 @@ export interface PackOptions {
   installMode?: InstallMode;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
-  archive?: ArchiveFormat;
   /** Fixed directory name (relative to staging root) for local deps. */
   localDepsDir?: string;
   /** When true, do not delete an existing staging directory. */
@@ -164,6 +160,5 @@ export interface PackResult {
   stagingDir: string;
   closure: RuntimeClosure;
   lockfile: NpmLockfile;
-  archivePath?: string;
   warnings: string[];
 }

@@ -1,7 +1,7 @@
 {
   "name": "ws-pack",
   "version": "1.0.0",
-  "description": "Creates self-contained deployment archives for npm workspaces.",
+  "description": "Creates self-contained deployment folders for npm workspaces.",
   "author": "cnshenj",
   "bin": {
     "ws-pack": "out/cli.js"
@@ -25,9 +25,7 @@
     "commander": "^15.0.0",
     "execa": "^9.6.1",
     "npm-package-arg": "^13.0.2",
-    "npm-packlist": "^10.0.4",
-    "tar": "^7.5.19",
-    "yazl": "^3.3.1"
+    "npm-packlist": "^10.0.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -35,7 +33,6 @@
     "@types/npm-packlist": "^7.0.3",
     "@types/npmcli__map-workspaces": "^3.0.4",
     "@types/npmcli__package-json": "^4.0.4",
-    "@types/yazl": "^3.3.1",
     "oxfmt": "^0.58.0",
     "oxlint": "^1.73.0",
     "tsx": "^4.19.0",

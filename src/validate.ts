@@ -1,4 +1,4 @@
-/** Pre-archive validation of the staging tree (SPEC Step 9). */
+/** Validation of the deployment folder (SPEC Step 9). */
 
 import * as path from "node:path";
 
@@ -11,7 +11,7 @@ export interface ValidationResult {
 }
 
 /**
- * Validate the staging tree before archiving.
+ * Validate the staging tree before it is used.
  *
  * Checks that the staging root manifest exists, that every local dependency was
  * materialized, and (when installed) that direct runtime dependencies are

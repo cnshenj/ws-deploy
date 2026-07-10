@@ -2,7 +2,6 @@
 
 import * as path from "node:path";
 
-import { createArchive } from "./archive.js";
 import { computeRuntimeClosure } from "./closure.js";
 import { getInstaller } from "./installer.js";
 import { loadRootLockfile } from "./lockfile.js";
@@ -13,19 +12,11 @@ import { writeJson } from "./util/fsx.js";
 import { validateStaging } from "./validate.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "./workspace-graph.js";
 
-/** Default archive file name for a target/format. */
-function defaultArchivePath(stagingDir: string, targetName: string, format: string): string {
-  const base = targetName.replace(/[@/]/g, "-").replace(/^-+/, "");
-  const ext = format === "zip" ? "zip" : "tgz";
-  return path.join(path.dirname(path.resolve(stagingDir)), `${base}.${ext}`);
-}
-
 /**
  * Run ws-pack end to end for a target workspace.
  */
 export async function runWsPack(options: PackOptions): Promise<PackResult> {
   const installMode: InstallMode = options.installMode ?? "npm-install";
-  const archiveFormat = options.archive ?? "none";
   const warnings: string[] = [];
 
   // Steps 1-2: discover graph and resolve target.
@@ -70,18 +61,10 @@ export async function runWsPack(options: PackOptions): Promise<PackResult> {
     throw new Error(`Staging validation failed:\n  - ${validation.errors.join("\n  - ")}`);
   }
 
-  // Step 10: archive.
-  let archivePath: string | undefined;
-  if (archiveFormat !== "none") {
-    const outPath = defaultArchivePath(options.stagingDir, target.name, archiveFormat);
-    archivePath = await createArchive(path.resolve(options.stagingDir), archiveFormat, outPath);
-  }
-
   return {
     stagingDir: path.resolve(options.stagingDir),
     closure,
     lockfile,
-    archivePath,
     warnings,
   };
 }

@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Build a tool that produces a **self-contained deployment folder** (optionally archived) for a single npm-workspace package.
+Build a tool that produces a **self-contained deployment folder** for a single npm-workspace package.
 
 The tool must:
 
@@ -99,8 +99,9 @@ The set of all packages reachable from the target workspace via runtime dependen
 ### 4.4 Staging root
 The directory created for deployment. The **target workspace is the root package** of this
 directory: its (rewritten) `package.json` is the root manifest, placed at the top level of the
-staging folder — not nested under a `packages/*` path. The deployment folder and any archive
-produced from it are rooted at the target workspace.
+staging folder — not nested under a `packages/*` path. The deployment folder is rooted at the
+target workspace. Packaging it into an archive (`.zip`/`.tgz`) is out of scope — leave that to
+dedicated tools.
 
 ### 4.5 Filtered lockfile
 A new lockfile generated for the staging root that contains only the dependency graph reachable from the target workspace.
@@ -119,7 +120,6 @@ The tool accepts:
 - `installMode`: `npm-install` (default), `npm-ci`, or `none`
 - `includeDevDependencies`: boolean, default `false`
 - `includeOptionalDependencies`: boolean, default `false`
-- `archive`: `none` (default), `tgz`, or `zip`
 - `localDepsDir`: staging-relative directory for local deps (default: `_staging_deps`)
 - `keepExistingStaging`: boolean, default `false` (when true, do not wipe an existing staging dir)
 
@@ -288,19 +288,8 @@ seam (see NFR5). Whichever backend runs must:
 - introduce no new semver resolution
 - reproduce the selected exact versions
 
----
-
-## FR10. Archive output
-
-The tool must optionally create an archive, for example:
-
-- `.zip`
-- `.tgz`
-- or a deploy folder ready for packaging
-
-The archive must contain only the staging closure of the target workspace and its runtime
-dependencies, and must be **rooted at the target workspace** — the target's `package.json`
-sits at the archive root, with dependencies beneath it.
+The output is the deployment folder itself. Packaging it into an archive is intentionally out
+of scope; use a dedicated archiving tool if a single-file artifact is needed.
 
 ---
 
@@ -336,8 +325,7 @@ Each module maps to one internal interface:
 | Lockfile Projector | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(rootLockfile, closure, rootManifest)` |
 | Staging Materializer | Copy target + local deps, rewrite manifests to staging-local `file:` refs | `materialize(closure, options)` |
 | Installer Adapter | Run the chosen PM install honoring the lockfile, no re-resolution | `getInstaller().install(stagingDir, mode)` |
-| Validator | Check staging is complete and installable before archiving | `validateStaging(stagingDir, closure, options)` |
-| Archiver | Package the staging folder | `createArchive(stagingDir, format, outPath)` |
+| Validator | Check the deployment folder is complete and installable | `validateStaging(stagingDir, closure, options)` |
 
 ---
 
@@ -351,8 +339,7 @@ The run is a fixed sequence of stages; each maps to a requirement above.
 4. **Materialize** — copy the target and every local dep into `<localDepsDir>/<name>`, and rewrite manifests so workspace/`file:` specifiers become staging-local `file:` refs; e.g. `workspace:*` and `file:../lib` both become `file:./_staging_deps/lib` (FR3–FR5, §3.4).
 5. **Project lockfile** — emit the filtered staging lockfile: exact versions from the root lockfile, local deps as `link` entries, unrelated packages omitted, placement per §8.1 (FR7, FR8).
 6. **Install** — when `installMode !== none`, run npm honoring the filtered lockfile (FR9).
-7. **Validate** — check the staging tree before archiving (FR9, §11).
-8. **Archive** — when `archive !== none`, package the staging folder (FR10).
+7. **Validate** — check the deployment folder is complete and installable (FR9, §11).
 
 ## 8.1 Registry placement — greedy most-used hoisting
 
@@ -563,7 +550,7 @@ Build in dependency order, because projection and materialization need an accura
 3. File/workspace dependency materialization.
 4. Lockfile projection (including placement, §8.1).
 5. Staging install.
-6. Validation and archiving.
+6. Validation of the deployment folder.
 
 The overriding rule is stated in §3.3: project the reachable subgraph into a new lockfile —
 never path-substitute root lockfile entries. That is what makes workspace deps, file deps,

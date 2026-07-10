@@ -6,14 +6,13 @@ import * as path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 
 import { runWsPack } from "./pack.js";
-import type { ArchiveFormat, InstallMode, PackOptions } from "./types.js";
+import type { InstallMode, PackOptions } from "./types.js";
 
 interface CliOptions {
   target: string;
   repo?: string;
   staging?: string;
   install: InstallMode;
-  archive: ArchiveFormat;
   includeDev: boolean;
   includeOptional: boolean;
   localDepsDir?: string;
@@ -25,13 +24,6 @@ function parseInstallMode(value: string): InstallMode {
     return value;
   }
   throw new InvalidArgumentError("Expected npm-install, npm-ci, or none.");
-}
-
-function parseArchiveFormat(value: string): ArchiveFormat {
-  if (value === "none" || value === "tgz" || value === "zip") {
-    return value;
-  }
-  throw new InvalidArgumentError("Expected none, tgz, or zip.");
 }
 
 async function run(cli: CliOptions): Promise<void> {
@@ -47,7 +39,6 @@ async function run(cli: CliOptions): Promise<void> {
     installMode: cli.install,
     includeDevDependencies: cli.includeDev,
     includeOptionalDependencies: cli.includeOptional,
-    archive: cli.archive,
     localDepsDir: cli.localDepsDir,
     keepExistingStaging: cli.keepStaging,
   };
@@ -59,9 +50,6 @@ async function run(cli: CliOptions): Promise<void> {
     `  local deps: ${result.closure.localDependencies.size}, ` +
       `registry packages: ${result.closure.registryPackages.size}\n`,
   );
-  if (result.archivePath) {
-    process.stdout.write(`  archive: ${result.archivePath}\n`);
-  }
   for (const warning of result.warnings) {
     process.stderr.write(`  warning: ${warning}\n`);
   }
@@ -79,11 +67,6 @@ program
     new Option("-m, --install <mode>", "Install mode")
       .argParser(parseInstallMode)
       .default("npm-install" as InstallMode),
-  )
-  .addOption(
-    new Option("--archive <format>", "Archive format")
-      .argParser(parseArchiveFormat)
-      .default("none" as ArchiveFormat),
   )
   .option("--include-dev", "Include the target's devDependencies", false)
   .option("--include-optional", "Include optionalDependencies in the closure", false)
