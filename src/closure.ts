@@ -241,6 +241,7 @@ function traverseRegistry(
     version,
     lockfileKey: key,
     dependencies: [],
+    peerDependencies: [],
   };
   ctx.registryPackages.set(instanceKey, node);
 
@@ -261,6 +262,19 @@ function traverseRegistry(
       if (childKey) {
         node.dependencies.push(childKey);
       }
+    }
+  }
+  // npm installs peers by default and requires their resolved entries to be
+  // present in a lockfile consumed by `npm ci`.
+  for (const peerName of Object.keys(entry.peerDependencies ?? {})) {
+    const peerKey = traverseRegistry(
+      ctx,
+      peerName,
+      key,
+      entry.peerDependenciesMeta?.[peerName]?.optional === true,
+    );
+    if (peerKey) {
+      node.peerDependencies.push(peerKey);
     }
   }
   return instanceKey;

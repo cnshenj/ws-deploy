@@ -245,4 +245,80 @@ describe("ws-deploy CLI E2E", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("runs npm ci when a retained registry package requires a peer dependency", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npm-ci-peer-"));
+    const tarballs = new Map<string, string>();
+    const { server, origin } = await startTarballServer(tarballs);
+
+    try {
+      const peer = await packPackage(root, tarballs, {
+        name: "fixture-peer",
+        version: "1.0.0",
+      });
+      const consumer = await packPackage(root, tarballs, {
+        name: "fixture-peer-consumer",
+        version: "1.0.0",
+        peerDependencies: { "fixture-peer": "^1.0.0" },
+      });
+
+      await writeJson(path.join(root, "package.json"), {
+        name: "fixture-root",
+        private: true,
+        workspaces: ["packages/*"],
+        devDependencies: { "fixture-peer": `${origin}/${peer}` },
+      });
+      await writeJson(path.join(root, "packages/app/package.json"), {
+        name: "fixture-app",
+        version: "1.0.0",
+        dependencies: { "fixture-peer-consumer": `${origin}/${consumer}` },
+      });
+      await fs.writeFile(
+        path.join(root, "packages/app/index.js"),
+        "export const app = 1;\n",
+        "utf8",
+      );
+
+      await execa(
+        "npm",
+        ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
+        { cwd: root },
+      );
+      const sourceLockfile = await readJson<NpmLockfile>(path.join(root, "package-lock.json"));
+      const deployDir = path.join(root, "deployment");
+
+      await execa(
+        "node",
+        [
+          "--import",
+          "tsx",
+          CLI_PATH,
+          "--target",
+          "fixture-app",
+          "--repo",
+          root,
+          "--deploy-dir",
+          deployDir,
+          "--install",
+          "npm-ci",
+        ],
+        { cwd: PROJECT_ROOT },
+      );
+      const projectedLockfile = await readJson<NpmLockfile>(
+        path.join(deployDir, "package-lock.json"),
+      );
+      const installedPeer = await readJson<PackageJson>(
+        path.join(deployDir, "node_modules/fixture-peer/package.json"),
+      );
+
+      assert.equal(installedPeer.version, "1.0.0");
+      assert.equal(
+        projectedLockfile.packages["node_modules/fixture-peer"]?.integrity,
+        sourceLockfile.packages["node_modules/fixture-peer"]?.integrity,
+      );
+    } finally {
+      await closeServer(server);
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

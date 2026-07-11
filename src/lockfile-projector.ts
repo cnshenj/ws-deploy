@@ -83,6 +83,11 @@ class RegistryPlacer {
       this.packages[key] = { ...source };
     }
 
+    // A peer must be visible from the dependent package, so place it in the
+    // same node_modules scope rather than inside the dependent package.
+    for (const peerKey of [...node.peerDependencies].toSorted()) {
+      this.place(targetScope, peerKey);
+    }
     for (const depKey of [...node.dependencies].toSorted()) {
       this.place(key, depKey);
     }
@@ -138,7 +143,7 @@ class RegistryPlacer {
       }
     }
     for (const node of this.graph.values()) {
-      for (const depKey of node.dependencies) {
+      for (const depKey of [...node.dependencies, ...node.peerDependencies]) {
         const dep = this.graph.get(depKey);
         if (dep) {
           bump(dep.name, dep.version);

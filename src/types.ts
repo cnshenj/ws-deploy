@@ -86,6 +86,8 @@ export interface ClosureRegistryPackage {
   lockfileKey: string;
   /** Registry dependency edges as `name@version` instance keys. */
   dependencies: string[];
+  /** Resolved peer edges that must be installed beside this package. */
+  peerDependencies: string[];
 }
 
 /** A direct registry demand from a deployment consumer (the root or a local dep). */
@@ -126,6 +128,7 @@ export interface LockfilePackageEntry {
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   [key: string]: unknown;
 }
 

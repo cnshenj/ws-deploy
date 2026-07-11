@@ -220,9 +220,11 @@ Starting from the target workspace, the tool recursively traverses only runtime 
 (see §4.2): `dependencies`, plus `optionalDependencies` when `includeOptionalDependencies`
 is set, plus `devDependencies` of the target only when `includeDevDependencies` is set.
 
-Peer dependencies are **not** traversed as edges. Because the root lockfile is the source of
-truth (§3.1), any peer that is actually installed already appears as a normal lockfile entry
-and is included through registry traversal; ws-deploy does not separately re-validate peers.
+Resolved peer dependencies of retained registry packages are traversed as install-graph edges.
+Although peers are not runtime import edges, npm installs them by default and `npm ci` requires
+their entries in the projected lockfile. Peers use the exact resolution from the root lockfile and
+are placed beside the package that declares them. Missing optional peers are omitted. ws-deploy
+does not separately re-validate peer compatibility.
 
 The closure must include:
 
@@ -450,7 +452,9 @@ DeployLocalDependency {
 }
 
 ClosureRegistryPackage {
-  name; version; lockfileKey; dependencies: string[]   // "name@version" instance keys
+  name; version; lockfileKey
+  dependencies: string[]       // "name@version" instance keys
+  peerDependencies: string[]   // resolved peers placed beside the dependent package
 }
 ```
 
@@ -488,9 +492,10 @@ If `foo` depends on `file:../lib` and `lib` depends on `file:../shared`, the too
 
 ## EC4. Peer dependencies
 
-Peer dependencies are not traversed or re-validated (FR6). Installed peers are already
-present as registry entries in the root lockfile and are picked up by normal traversal.
-(Explicit peer-conflict validation is a possible future feature, not a current guarantee.)
+Resolved peers of retained registry packages are traversed and placed beside their dependents so
+the filtered lockfile remains valid for `npm ci` (FR6). Missing optional peers are omitted. Peer
+compatibility is not separately re-validated; explicit peer-conflict validation remains a possible
+future feature.
 
 ## EC5. Optional dependencies
 

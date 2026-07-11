@@ -123,7 +123,8 @@ It does not traverse:
 - `devDependencies`, unless `--include-dev` is set; only the target's development dependencies are
   included
 - `optionalDependencies` as closure edges, unless `--include-optional` is set
-- `peerDependencies` as separate graph edges
+- Peers declared by the target or local packages as separate runtime edges; resolved peers of
+  retained registry packages are still included because `npm ci` requires a complete install graph
 - Unrelated workspaces or dependency branches
 
 Package files are selected with npm's pack-list rules. This respects the package's `files` field,
