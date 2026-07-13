@@ -321,4 +321,83 @@ describe("ws-deploy CLI E2E", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+  it("uses the npm configuration supplied by --npmrc", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npmrc-"));
+
+    try {
+      const repo = path.join(root, "repo");
+      await writeJson(path.join(repo, "package.json"), {
+        name: "fixture-root",
+        private: true,
+        workspaces: ["packages/*"],
+      });
+      await writeJson(path.join(repo, "packages/app/package.json"), {
+        name: "fixture-app",
+        version: "1.0.0",
+        dependencies: { "fixture-local": "workspace:*" },
+      });
+      await writeJson(path.join(repo, "packages/local/package.json"), {
+        name: "fixture-local",
+        version: "1.0.0",
+      });
+      await writeJson(path.join(repo, "package-lock.json"), {
+        name: "fixture-root",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "fixture-root",
+            workspaces: ["packages/*"],
+          },
+          "packages/app": {
+            name: "fixture-app",
+            version: "1.0.0",
+            dependencies: { "fixture-local": "workspace:*" },
+          },
+          "packages/local": {
+            name: "fixture-local",
+            version: "1.0.0",
+          },
+          "node_modules/fixture-app": {
+            resolved: "packages/app",
+            link: true,
+          },
+          "node_modules/fixture-local": {
+            resolved: "packages/local",
+            link: true,
+          },
+        },
+      });
+
+      const baseArgs = ["--import", "tsx", CLI_PATH, "--target", "fixture-app", "--repo", repo];
+      const defaultDeployDir = path.join(root, "default-deployment");
+      await execa("node", [...baseArgs, "--deploy-dir", defaultDeployDir], {
+        cwd: PROJECT_ROOT,
+      });
+      await fs.access(path.join(defaultDeployDir, "node_modules/fixture-local/package.json"));
+
+      const npmrc = path.join(root, "install.npmrc");
+      await fs.writeFile(npmrc, "dry-run=true\n", "utf8");
+      const configuredDeployDir = path.join(root, "configured-deployment");
+      const configured = await execa(
+        "node",
+        [
+          ...baseArgs,
+          "--deploy-dir",
+          configuredDeployDir,
+          "--npmrc",
+          path.relative(PROJECT_ROOT, npmrc),
+        ],
+        { cwd: PROJECT_ROOT, reject: false },
+      );
+
+      assert.equal(configured.exitCode, 1);
+      assert.match(configured.stderr, /Local dependency "fixture-local" is not present/);
+      await assertMissing(
+        path.join(configuredDeployDir, "node_modules/fixture-local/package.json"),
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

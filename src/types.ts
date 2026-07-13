@@ -154,6 +154,8 @@ export interface DeployOptions {
   targetWorkspace: string;
   deployDir: string;
   installMode?: InstallMode;
+  /** npm configuration file used by the installation step. */
+  npmrc?: string;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
   /** When true, do not delete an existing deployment directory. */

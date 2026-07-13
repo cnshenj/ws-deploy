@@ -65,6 +65,7 @@ ws-deploy --target <workspace-name> [options]
 | `-r, --repo <dir>`       | Monorepo root.                                                       | Current directory   |
 | `-o, --deploy-dir <dir>` | Deployment output directory.                                         | `./deploy/<target>` |
 | `-m, --install <mode>`   | Installation strategy: `npm-ci`, `npm-install`, or `none`.           | `npm-ci`            |
+| `--npmrc <path>`         | npm configuration file used by the installation step.               | User npm config     |
 | `--include-dev`          | Include the target workspace's `devDependencies`.                    | `false`             |
 | `--include-optional`     | Include optional dependencies throughout the closure.                | `false`             |
 | `--keep-deploy-dir`      | Keep the existing deployment directory instead of deleting it first. | `false`             |
@@ -108,6 +109,10 @@ npx ws-deploy --target @acme/api --install none
 Both npm-backed modes disable lifecycle scripts. Packages that require `preinstall`, `install`, or
 `postinstall` scripts must be prepared before deployment or handled explicitly by the consuming
 pipeline.
+
+Use `--npmrc <path>` to run either npm-backed mode with a specific npm configuration file. Relative
+paths are resolved from the current working directory. The file is passed to npm as its user config
+and is not copied into the deployment folder.
 
 ## What gets included
 
@@ -190,6 +195,7 @@ interface DeployOptions {
   targetWorkspace: string;
   deployDir: string;
   installMode?: "npm-ci" | "npm-install" | "none";
+  npmrc?: string;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
   keepExistingDeployDir?: boolean;

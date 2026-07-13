@@ -13,6 +13,7 @@ interface CliOptions {
   repo?: string;
   deployDir?: string;
   install: InstallMode;
+  npmrc?: string;
   includeDev: boolean;
   includeOptional: boolean;
   keepDeployDir: boolean;
@@ -34,6 +35,7 @@ async function run(cli: CliOptions): Promise<void> {
     targetWorkspace: cli.target,
     deployDir,
     installMode: cli.install,
+    npmrc: cli.npmrc === undefined ? undefined : path.resolve(cli.npmrc),
     includeDevDependencies: cli.includeDev,
     includeOptionalDependencies: cli.includeOptional,
     keepExistingDeployDir: cli.keepDeployDir,
@@ -64,6 +66,7 @@ program
       .argParser(parseInstallMode)
       .default(DEFAULT_INSTALL_MODE),
   )
+  .option("--npmrc <path>", "Path to the .npmrc used for installation")
   .option("--include-dev", "Include the target's devDependencies", false)
   .option("--include-optional", "Include optionalDependencies in the closure", false)
   .option("--keep-deploy-dir", "Do not delete an existing deployment directory first", false)

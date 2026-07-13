@@ -128,6 +128,7 @@ The tool accepts:
 - `targetWorkspace`: workspace package name, for example `foo` (required)
 - `deployDir`: output directory (default: `./deploy/<target>`)
 - `installMode`: `npm-install`, `npm-ci` (default), or `none`
+- `npmrc`: optional path to the npm configuration file used by the installation step
 - `includeDevDependencies`: boolean, default `false`
 - `includeOptionalDependencies`: boolean, default `false`
 - `keepExistingDeployDir`: boolean, default `false` (when true, do not wipe an existing deployment directory)
@@ -340,7 +341,7 @@ Each module maps to one internal interface:
 | Closure Resolver        | Traverse runtime edges from the target, collect local + registry packages                           | `computeRuntimeClosure(graph, lockfile, target, options)`               |
 | Lockfile Projector      | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(rootLockfile, closure, rootManifest)`                  |
 | Deployment Materializer | Copy target + local deps, rewrite manifests to deployment-local `file:` refs                        | `materialize(closure, options)`                                         |
-| Installer Adapter       | Run the chosen PM install honoring the lockfile, no re-resolution                                   | `getInstaller().install(deployDir, mode)`                               |
+| Installer Adapter       | Run the chosen PM with the filtered lockfile and optional npm config                                | `getInstaller().install(deployDir, mode, npmrc?)`                       |
 | Validator               | Check the deployment folder is complete and installable                                             | `validateDeployment(deployDir, closure, options)`                       |
 
 ---

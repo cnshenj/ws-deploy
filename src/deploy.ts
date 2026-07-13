@@ -53,7 +53,11 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
   // Step 8: install in the deployment directory.
   if (installMode !== "none") {
     const installer = getInstaller();
-    await installer.install(path.resolve(options.deployDir), installMode);
+    await installer.install(
+      path.resolve(options.deployDir),
+      installMode,
+      options.npmrc === undefined ? undefined : path.resolve(options.npmrc),
+    );
   }
 
   // Step 9: validate.
