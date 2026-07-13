@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Creates self-contained deployment folders for npm workspaces.",
   "author": "cnshenj",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cnshenj/ws-deploy.git"
+  },
   "bin": {
     "ws-deploy": "out/cli.js"
   },
