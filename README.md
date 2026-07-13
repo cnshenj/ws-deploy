@@ -117,15 +117,20 @@ By default, the dependency closure contains:
 - Transitive registry dependencies at the exact versions in the root lockfile
 - Reachable workspace dependencies
 - Reachable `file:` and `link:` dependencies
+- Resolved peer dependencies required by retained registry packages
 
-It does not traverse:
+Dependency policies are applied as follows:
 
-- `devDependencies`, unless `--include-dev` is set; only the target's development dependencies are
-  included
-- `optionalDependencies` as closure edges, unless `--include-optional` is set
-- Peers declared by the target or local packages as separate runtime edges; resolved peers of
-  retained registry packages are still included because `npm ci` requires a complete install graph
-- Unrelated workspaces or dependency branches
+- `--include-dev` adds the target workspace's `devDependencies` and their reachable runtime
+  dependencies. The target's development dependencies remain in the deployment root manifest;
+  development dependencies of copied local packages are not included.
+- `--include-optional` traverses `optionalDependencies` throughout the closure. Missing optional
+  registry packages are omitted with a warning.
+- Peers declared by the target or copied local packages are not separate runtime edges. Resolved
+  peers of retained registry packages are included at the exact versions and placements from the
+  root lockfile because `npm ci` requires a complete install graph. Missing optional peers are
+  omitted.
+- Unrelated workspaces and dependency branches are always excluded.
 
 Package files are selected with npm's pack-list rules. This respects the package's `files` field,
 `.npmignore` or `.gitignore`, and npm's always-included files while excluding `node_modules`.
