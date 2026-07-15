@@ -9,15 +9,15 @@ The tool must:
 1. Copy the target workspace files to a deployment folder.
 2. Discover and process **workspace dependencies** recursively.
 3. Discover and process **file dependencies** such as `file:../lib`.
-4. Project the root `package-lock.json` into a **filtered deployment lockfile** that contains only the dependency closure of the target workspace.
-5. Preserve the exact dependency versions from the root lockfile.
+4. Project the repository `package-lock.json` into a **filtered deployment lockfile** that contains only the dependency closure of the target workspace.
+5. Preserve the exact dependency versions from the repository lockfile.
 6. Install or materialize all runtime dependencies into the deployment folder without including unrelated workspaces.
 
 ---
 
 ## 2. Problem Statement
 
-In an npm monorepo, the root lockfile and root `node_modules` represent the dependency graph for the **entire repo**, not for one workspace alone.
+In an npm monorepo, the repository lockfile and repository `node_modules` represent the dependency graph for the **entire repository**, not for one workspace alone.
 
 A target workspace like `foo` may depend on:
 
@@ -32,7 +32,7 @@ The tool must avoid these incorrect behaviors:
 - copying the entire monorepo
 - relying on `npm install` to resolve semver ranges again
 - including unrelated workspaces such as `bar`
-- assuming root `node_modules` can be reused as-is in the deployment
+- assuming repository `node_modules` can be reused as-is in the deployment
 - ignoring workspace or file dependencies
 
 ---
@@ -41,7 +41,7 @@ The tool must avoid these incorrect behaviors:
 
 ### 3.1 Source of truth
 
-The **root `package-lock.json`** is the source of truth for exact versions and resolved dependency metadata.
+The **repository `package-lock.json`** is the source of truth for exact versions and resolved dependency metadata.
 
 ### 3.2 No re-resolution
 
@@ -49,7 +49,7 @@ The tool must **not** let the package manager choose newer compatible versions d
 
 ### 3.3 Graph projection, not path translation
 
-**The single most important rule: never "move" root lockfile entries into the deployment by path
+**The single most important rule: never "move" repository lockfile entries into the deployment by path
 substitution.** Instead, the tool must:
 
 - compute the dependency closure of the target workspace
@@ -73,7 +73,7 @@ must be converted into a deployment-local artifact by:
 
 ### 3.5 Registry dependencies remain registry dependencies
 
-Packages from npm registry such as `somelib` should remain normal package dependencies in the filtered lockfile, with exact versions copied from the root lockfile.
+Packages from npm registry such as `somelib` should remain normal package dependencies in the filtered lockfile, with exact versions copied from the repository lockfile.
 
 ---
 
@@ -104,17 +104,16 @@ unless the deploy mode explicitly requests them.
 
 The set of all packages reachable from the target workspace via runtime dependency edges.
 
-### 4.4 Deployment root
+### 4.4 Deployment directory
 
-The directory created for deployment. The **target workspace is the root package** of this
-directory: its (rewritten) `package.json` is the root manifest, placed at the top level of the
-deployment folder — not nested under a `packages/*` path. The deployment folder is rooted at the
-target workspace. Packaging it into an archive (`.zip`/`.tgz`) is out of scope — leave that to
-dedicated tools.
+The directory created for deployment. The **target workspace is the deployment package**: its
+rewritten `package.json` is the deployment manifest, placed at the top level of the deployment
+folder rather than nested under a `packages/*` path. Packaging it into an archive (`.zip`/`.tgz`)
+is out of scope; leave that to dedicated tools.
 
 ### 4.5 Filtered lockfile
 
-A new lockfile generated for the deployment root that contains only the dependency graph reachable from the target workspace.
+A new lockfile generated for the deployment directory that contains only the dependency graph reachable from the target workspace.
 
 ---
 
@@ -124,26 +123,26 @@ A new lockfile generated for the deployment root that contains only the dependen
 
 The tool accepts:
 
-- `repoRoot`: path to monorepo root (default: cwd)
+- `repositoryDir`: path to the monorepo directory (default: cwd)
 - `targetWorkspace`: workspace package name, for example `foo` (required)
-- `deployDir`: output directory (default: `./deploy/<target>`)
+- `deploymentDir`: output directory (default: `./deploy/<target>`)
 - `installMode`: `npm-install`, `npm-ci` (default), or `none`
 - `npmrc`: optional path to the npm configuration file used by the installation step
 - `includeDevDependencies`: boolean, default `false`
 - `includeOptionalDependencies`: boolean, default `false`
-- `keepExistingDeployDir`: boolean, default `false` (when true, do not wipe an existing deployment directory)
+- `keepExistingDeploymentDir`: boolean, default `false` (when true, do not wipe an existing deployment directory)
 
 ---
 
 ## FR2. Discover workspace graph
 
-The tool must parse the monorepo root and discover all workspaces.
+The tool must parse the repository directory and discover all workspaces.
 
 It must build a workspace graph containing:
 
 - workspace package name
 - package.json path
-- package root path
+- package directory path
 - dependency declarations
 - scripts
 - build output paths if configured
@@ -169,7 +168,7 @@ It must exclude, by default:
 - `node_modules`
 - test files
 - source files not needed for runtime if the package is already built
-- repo-level unrelated files
+- repository-level unrelated files
 
 The file selection logic must be configurable.
 
@@ -223,7 +222,7 @@ is set, plus `devDependencies` of the target only when `includeDevDependencies` 
 
 Resolved peer dependencies of retained registry packages are traversed as install-graph edges.
 Although peers are not runtime import edges, npm installs them by default and `npm ci` requires
-their entries in the projected lockfile. Peers use the exact resolution from the root lockfile and
+their entries in the projected lockfile. Peers use the exact resolution from the repository lockfile and
 are placed beside the package that declares them. Missing optional peers are omitted. ws-deploy
 does not separately re-validate peer compatibility.
 
@@ -239,11 +238,11 @@ The closure must exclude unrelated workspaces such as `bar`.
 
 ---
 
-## FR7. Preserve exact versions from root lockfile
+## FR7. Preserve exact versions from repository lockfile
 
-The tool must use the exact resolved version from the root `package-lock.json` for every registry dependency in the closure.
+The tool must use the exact resolved version from the repository `package-lock.json` for every registry dependency in the closure.
 
-If the root lockfile says:
+If the repository lockfile says:
 
 - `lodash` resolves to `4.1.1` for one dependency path
 - `lodash` resolves to `3.10.1` for another dependency path
@@ -263,7 +262,7 @@ The filtered lockfile must include:
 - the target workspace package
 - all reachable workspace packages
 - all reachable registry packages
-- exact versions from the root lockfile
+- exact versions from the repository lockfile
 - dependency relationships only for the reachable subgraph
 - integrity and resolved metadata where available
 - local copy references for workspace/file dependencies
@@ -275,17 +274,17 @@ The filtered lockfile must omit:
 - unrelated dependency branches
 
 When one name has several demanded versions, their placement (which version sits at the
-deployment root vs. nested under a consumer) follows the greedy most-used rule in §8.1.
+the deployment's top-level `node_modules` vs. nested under a consumer) follows the greedy most-used rule in §8.1.
 
 ---
 
 ## FR9. Reconstruct installable deployment tree
 
-The tool must ensure the deployment folder is installable as a standalone package root.
+The tool must ensure the deployment folder is installable as a standalone package.
 
-The **target workspace is the root of the deployment folder**: its rewritten `package.json` is
-written at the top level (the lockfile's `""` root entry), and its runtime dependencies live
-beneath it. The deployment root must contain:
+The **target workspace is the deployment package**: its rewritten `package.json` is written at the
+top level (the lockfile's `packages[""]` deployment entry), and its runtime dependencies live
+beneath it. The deployment directory must contain:
 
 - target package files
 - filtered `package.json`
@@ -309,7 +308,7 @@ of scope; use a dedicated archiving tool if a single-file artifact is needed.
 
 ## NFR1. Determinism
 
-Running the tool on the same repo state must produce the same deployment output, assuming the root lockfile and workspace files are unchanged.
+Running the tool on the same repository state must produce the same deployment output, assuming the repository lockfile and workspace files are unchanged.
 
 ## NFR2. Reproducibility
 
@@ -336,13 +335,13 @@ Each module maps to one internal interface:
 
 | Module                  | Responsibility                                                                                      | Interface                                                               |
 | ----------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Workspace Graph Loader  | Read workspace config, discover packages, parse manifests, build the graph                          | `loadWorkspaceGraph(repoRoot)`; `resolveTargetWorkspace(graph, target)` |
+| Workspace Graph Loader  | Read workspace config, discover packages, parse manifests, build the graph                          | `loadWorkspaceGraph(repositoryDir)`; `resolveTargetWorkspace(graph, target)` |
 | Dependency Classifier   | Classify each edge as workspace / file / registry / peer / dev                                      | `classifyDependency(name, specifier, workspaceNames)`                   |
 | Closure Resolver        | Traverse runtime edges from the target, collect local + registry packages                           | `computeRuntimeClosure(graph, lockfile, target, options)`               |
-| Lockfile Projector      | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(rootLockfile, closure, rootManifest)`                  |
-| Deployment Materializer | Copy target + local deps, rewrite manifests to deployment-local `file:` refs                        | `materialize(closure, options)`                                         |
-| Installer Adapter       | Run the chosen PM with the filtered lockfile and optional npm config                                | `getInstaller().install(deployDir, mode, npmrc?)`                       |
-| Validator               | Check the deployment folder is complete and installable                                             | `validateDeployment(deployDir, closure, options)`                       |
+| Lockfile Projector      | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(repositoryLockfile, closure, deploymentManifest)`      |
+| Deployment Materializer | Copy target + local deps, rewrite manifests to deployment-local `file:` refs                        | `materialize(closure, repositoryManifest, options)`                     |
+| Installer Adapter       | Run the chosen PM with the filtered lockfile and optional npm config                                | `getInstaller().install(deploymentDir, mode, npmrc?)`                   |
+| Validator               | Check the deployment folder is complete and installable                                             | `validateDeployment(deploymentDir, closure, options)`                   |
 
 ---
 
@@ -350,11 +349,11 @@ Each module maps to one internal interface:
 
 The run is a fixed sequence of stages; each maps to a requirement above.
 
-1. **Load** — read root `package.json`, root `package-lock.json`, and workspace manifests; build the graph (FR2).
+1. **Load** — read the repository `package.json`, repository `package-lock.json`, and workspace manifests; build the graph (FR2).
 2. **Resolve target** — locate the target node; fail early if missing (FR1, §11).
 3. **Compute closure** — traverse runtime edges, classifying each as workspace / file / registry (FR4–FR6).
 4. **Materialize** — copy the target and every local dep into `local-packages/<name>`, and rewrite manifests so workspace/`file:` specifiers become deployment-local `file:` refs; e.g. `workspace:*` and `file:../lib` both become `file:./local-packages/lib` (FR3–FR5, §3.4).
-5. **Project lockfile** — emit the filtered deployment lockfile: exact versions from the root lockfile, local deps as `link` entries, unrelated packages omitted, placement per §8.1 (FR7, FR8).
+5. **Project lockfile** — emit the filtered deployment lockfile: exact versions from the repository lockfile, local deps as `link` entries, unrelated packages omitted, placement per §8.1 (FR7, FR8).
 6. **Install** — when `installMode !== none`, run npm honoring the filtered lockfile (FR9).
 7. **Validate** — check the deployment folder is complete and installable (FR9, §11).
 
@@ -362,31 +361,32 @@ The run is a fixed sequence of stages; each maps to a requirement above.
 
 FR7/FR8 require that every consumer resolves the _exact_ locked version it demanded and
 that all demanded versions of a name are retained. When a name has more than one demanded
-version, the projector must decide which single version is placed at the deployment root
+version, the projector must decide which single version is placed in the deployment's top-level
 `node_modules/<name>` and which versions are nested under the specific consumers that need
-them. The deployment root is a _new_ root (the target workspace), so the monorepo's original
-layout must not be reused; the layout is recomputed from the closure.
+them. The deployment directory contains the target workspace as its top-level package, so the
+monorepo's original layout must not be reused; the layout is recomputed from the closure.
 
 The placement rule is **greedy most-used hoisting**:
 
-1. **Choose the root version of each name.** For every registry package name in the closure:
+1. **Choose the top-level deployment version of each name.** For every registry package name in the closure:
 
-- If the deployment root package directly depends on that name, the root version is the
-  version the root demands. **Root direct dependencies always win**, even if a different
-  version is more common in the closure.
+- If the deployment package directly depends on that name, the top-level version is the
+  version it demands. **Direct deployment dependencies always win**, even if a different version
+  is more common in the closure.
 - Otherwise, choose the **most-used version**: the version demanded by the greatest number
   of consumers, counting every dependency edge in the closure (top-level demands plus every
   transitive registry edge) that requires each version.
 - Ties (equal counts) are broken deterministically by ascending version order (NFR1).
 
 2. **Place each demand relative to its consumer scope.** For a demand of `name@version` made
-   by a consumer at scope `S` (the deployment root is scope `""`; a nested package's scope is its
-   own `node_modules` directory):
-   - Walk from `S` up its ancestor scopes to the root. The **nearest ancestor scope that
+   by a consumer at scope `S` (the deployment package is scope `""`; a nested package's scope is
+   its own `node_modules` directory):
+   - Walk from `S` up its ancestor scopes to the deployment package scope. The **nearest ancestor scope that
      already hosts `name`** is reused when its hosted version equals `version`; if that
      ancestor hosts a _different_ version, `version` must nest directly under the consumer `S`.
-   - If no ancestor yet hosts `name`, the package hoists to the root when `version` equals the
-     chosen root version; otherwise it nests directly under the consumer `S`.
+   - If no ancestor yet hosts `name`, the package hoists to the deployment's top-level
+     `node_modules` when `version` equals the chosen top-level deployment version; otherwise it
+     nests directly under the consumer `S`.
 
 3. **One version per scope.** A given scope's `node_modules` hosts at most one version of any
    name. Reaching a second version for the same scope is an internal error.
@@ -395,9 +395,9 @@ The placement rule is **greedy most-used hoisting**:
    registry dependencies are placed relative to `T` (in a stable, sorted order), so conflicts
    deeper in the graph nest under the package that introduced them.
 
-This produces a deterministic, npm-compatible layout: the most-used (or root-pinned) version
-is shared at the root, and every conflicting minority version is nested under exactly the
-consumers that demand it.
+This produces a deterministic, npm-compatible layout: the most-used (or directly pinned) version
+is shared in the deployment's top-level `node_modules`, and every conflicting minority version is
+nested under exactly the consumers that demand it.
 
 ---
 
@@ -448,8 +448,8 @@ RuntimeClosure {
 
 DeployLocalDependency {
   name; sourceType: "workspace" | "file"; sourcePath; version; manifest
-  deployRelativePath   // e.g. "local-packages/lib"
-  deployReference      // e.g. "file:./local-packages/lib"
+  deploymentRelativePath   // e.g. "local-packages/lib"
+  deploymentReference      // e.g. "file:./local-packages/lib"
 }
 
 ClosureRegistryPackage {
@@ -461,17 +461,17 @@ ClosureRegistryPackage {
 
 ## 9.4 Filtered lockfile
 
-An npm lockfile v3 document (`lockfileVersion` copied from the root when ≥ 2, else 3):
+An npm lockfile v3 document (`lockfileVersion` copied from the repository lockfile when ≥ 2, else 3):
 
 ```text
 FilteredLockfile {
   name; version; lockfileVersion; requires: true
-  packages: Record<string, LockfilePackageEntry>   // "" is the deployment root
+  packages: Record<string, LockfilePackageEntry>   // "" is the deployment package entry
 }
 ```
 
 Local deps appear as a `link` entry plus a target entry; registry packages carry exact
-`version`/`resolved`/`integrity` copied from the root lockfile. The legacy top-level
+`version`/`resolved`/`integrity` copied from the repository lockfile. The legacy top-level
 `dependencies` map (lockfile v1) is not emitted.
 
 ---
@@ -515,11 +515,11 @@ If a package requires build output to execute, the deployment process must inclu
 - target workspace not found
 - a workspace dependency does not resolve to a known workspace package
 - a `file:` dependency has no `package.json` at the resolved path
-- root lockfile missing, or has no `packages` map
-- **a required runtime dependency is reachable but has no entry in the root lockfile** — the
+- repository lockfile missing, or has no `packages` map
+- **a required runtime dependency is reachable but has no entry in the repository lockfile** — the
   lockfile is out of sync with the manifests; omitting it would ship a broken artifact (§3.1)
 - a placement invariant is violated (two versions demanded for one scope)
-- deployment validation fails (missing root manifest, an un-materialized local dep, or — after
+- deployment validation fails (missing deployment manifest, an un-materialized local dep, or — after
   install — a local dep missing from `node_modules`)
 - the installer exits non-zero
 
@@ -527,15 +527,15 @@ Messages should name the dependency, the offending path or parent package, and t
 
 ## 11.2 Warnings (recorded, non-fatal)
 
-- an **optional** dependency is not found in the root lockfile → omitted (legitimate for
+- an **optional** dependency is not found in the repository lockfile → omitted (legitimate for
   platform-specific optionals)
 - a manifest entry references a workspace/`file:` package outside the closure → dropped from
   the rewritten manifest
 
 ## 11.3 Optional policies (not enforced by default)
 
-- **Out-of-repo file dependencies.** A `file:` specifier that resolves outside the monorepo
-  root is staged as-is today. Because it depends on a path not under the repo's version
+- **Out-of-repository file dependencies.** A `file:` specifier that resolves outside the monorepo
+  directory is staged as-is today. Because it depends on a path not under the repository's version
   control, it can break reproducibility (NFR1/NFR2); a future opt-in policy may reject such
   dependencies. It is not a hard error by default, since some setups legitimately reference
   sibling checkouts.
@@ -562,7 +562,7 @@ If `foo` depends on `file:../lib`, then `lib` is resolved, copied into the deplo
 
 ## AC4. Registry dependency preservation
 
-If root lockfile locks `lodash@4.1.1`, the deployment must use `4.1.1` and must not upgrade to `4.2.0` just because the semver range allows it.
+If the repository lockfile locks `lodash@4.1.1`, the deployment must use `4.1.1` and must not upgrade to `4.2.0` just because the semver range allows it.
 
 ## AC5. Transitive registry dependency inclusion
 
@@ -586,5 +586,5 @@ Build in dependency order, because projection and materialization need an accura
 6. Validation of the deployment folder.
 
 The overriding rule is stated in §3.3: project the reachable subgraph into a new lockfile —
-never path-substitute root lockfile entries. That is what makes workspace deps, file deps,
+never path-substitute repository lockfile entries. That is what makes workspace deps, file deps,
 multiple versions of one package, exact-version fidelity, and workspace exclusion all work.

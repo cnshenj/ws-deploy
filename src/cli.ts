@@ -10,13 +10,13 @@ import { DEFAULT_INSTALL_MODE, type InstallMode, type DeployOptions } from "./ty
 
 interface CliOptions {
   target: string;
-  repo?: string;
-  deployDir?: string;
+  repositoryDir?: string;
+  deploymentDir?: string;
   install: InstallMode;
   npmrc?: string;
   includeDev: boolean;
   includeOptional: boolean;
-  keepDeployDir: boolean;
+  keepDeploymentDir: boolean;
 }
 
 function parseInstallMode(value: string): InstallMode {
@@ -27,23 +27,25 @@ function parseInstallMode(value: string): InstallMode {
 }
 
 async function run(cli: CliOptions): Promise<void> {
-  const repoRoot = path.resolve(cli.repo ?? process.cwd());
-  const deployDir = path.resolve(cli.deployDir ?? path.join(process.cwd(), "deploy", cli.target));
+  const repositoryDir = path.resolve(cli.repositoryDir ?? process.cwd());
+  const deploymentDir = path.resolve(
+    cli.deploymentDir ?? path.join(process.cwd(), "deploy", cli.target),
+  );
 
   const options: DeployOptions = {
-    repoRoot,
+    repositoryDir,
     targetWorkspace: cli.target,
-    deployDir,
+    deploymentDir,
     installMode: cli.install,
     npmrc: cli.npmrc === undefined ? undefined : path.resolve(cli.npmrc),
     includeDevDependencies: cli.includeDev,
     includeOptionalDependencies: cli.includeOptional,
-    keepExistingDeployDir: cli.keepDeployDir,
+    keepExistingDeploymentDir: cli.keepDeploymentDir,
   };
 
   const result = await runWsDeploy(options);
 
-  process.stdout.write(`\nDeployment ready: ${result.deployDir}\n`);
+  process.stdout.write(`\nDeployment ready: ${result.deploymentDir}\n`);
   process.stdout.write(
     `  local deps: ${result.closure.localDependencies.size}, ` +
       `registry packages: ${result.closure.registryPackages.size}\n`,
@@ -59,8 +61,8 @@ program
   .name("ws-deploy")
   .description("Create a self-contained deployment folder for an npm workspace")
   .requiredOption("-t, --target <name>", "Target workspace package name")
-  .option("-r, --repo <dir>", "Monorepo root (default: cwd)")
-  .option("-o, --deploy-dir <dir>", "Deployment directory (default: ./deploy/<target>)")
+  .option("-r, --repository-dir <dir>", "Monorepo directory (default: cwd)")
+  .option("-o, --deployment-dir <dir>", "Deployment directory (default: ./deploy/<target>)")
   .addOption(
     new Option("-m, --install <mode>", "Install mode")
       .argParser(parseInstallMode)
@@ -69,7 +71,7 @@ program
   .option("--npmrc <path>", "Path to the .npmrc used for installation")
   .option("--include-dev", "Include the target's devDependencies", false)
   .option("--include-optional", "Include optionalDependencies in the closure", false)
-  .option("--keep-deploy-dir", "Do not delete an existing deployment directory first", false)
+  .option("--keep-deployment-dir", "Do not delete an existing deployment directory first", false)
   .allowExcessArguments(false)
   .action(async (cli: CliOptions) => {
     await run(cli);

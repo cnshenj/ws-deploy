@@ -11,8 +11,8 @@ import { execa } from "execa";
 
 import type { NpmLockfile, PackageJson } from "../src/types.js";
 
-const PROJECT_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CLI_PATH = path.join(PROJECT_ROOT, "src/cli.ts");
+const PROJECT_DIR = fileURLToPath(new URL("..", import.meta.url));
+const CLI_PATH = path.join(PROJECT_DIR, "src/cli.ts");
 
 async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -63,13 +63,13 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 async function packPackage(
-  root: string,
+  repositoryDir: string,
   tarballs: Map<string, string>,
   manifest: PackageJson,
 ): Promise<string> {
   const safeName = manifest.name?.replace(/[^a-zA-Z0-9.-]/g, "-") ?? "package";
-  const sourceDir = path.join(root, "package-sources", `${safeName}-${manifest.version}`);
-  const outputDir = path.join(root, "tarballs");
+  const sourceDir = path.join(repositoryDir, "package-sources", `${safeName}-${manifest.version}`);
+  const outputDir = path.join(repositoryDir, "tarballs");
   await writeJson(path.join(sourceDir, "package.json"), manifest);
   await fs.writeFile(
     path.join(sourceDir, "index.js"),
@@ -91,44 +91,44 @@ async function assertMissing(file: string): Promise<void> {
 
 describe("ws-deploy CLI E2E", () => {
   it("runs npm ci with exact nested versions and excludes unrelated packages", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npm-ci-"));
+    const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npm-ci-"));
     const tarballs = new Map<string, string>();
     const { server, origin } = await startTarballServer(tarballs);
 
     try {
-      const sharedV1 = await packPackage(root, tarballs, {
+      const sharedV1 = await packPackage(repositoryDir, tarballs, {
         name: "fixture-shared",
         version: "1.0.0",
       });
-      const sharedV2 = await packPackage(root, tarballs, {
+      const sharedV2 = await packPackage(repositoryDir, tarballs, {
         name: "fixture-shared",
         version: "2.0.0",
       });
-      const consumerA = await packPackage(root, tarballs, {
+      const consumerA = await packPackage(repositoryDir, tarballs, {
         name: "fixture-consumer-a",
         version: "1.0.0",
         dependencies: { "fixture-shared": `${origin}/${sharedV1}` },
       });
-      const consumerB = await packPackage(root, tarballs, {
+      const consumerB = await packPackage(repositoryDir, tarballs, {
         name: "fixture-consumer-b",
         version: "1.0.0",
         dependencies: { "fixture-shared": `${origin}/${sharedV2}` },
       });
-      const unrelated = await packPackage(root, tarballs, {
+      const unrelated = await packPackage(repositoryDir, tarballs, {
         name: "fixture-unrelated-registry",
         version: "9.0.0",
       });
-      const devRegistry = await packPackage(root, tarballs, {
+      const devRegistry = await packPackage(repositoryDir, tarballs, {
         name: "fixture-dev-registry",
         version: "4.0.0",
       });
 
-      await writeJson(path.join(root, "package.json"), {
-        name: "fixture-root",
+      await writeJson(path.join(repositoryDir, "package.json"), {
+        name: "fixture-repository",
         private: true,
         workspaces: ["packages/*"],
       });
-      await writeJson(path.join(root, "packages/app/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
         name: "fixture-app",
         version: "1.0.0",
         dependencies: {
@@ -142,29 +142,29 @@ describe("ws-deploy CLI E2E", () => {
         },
       });
       await fs.writeFile(
-        path.join(root, "packages/app/index.js"),
+        path.join(repositoryDir, "packages/app/index.js"),
         "export const app = 1;\n",
         "utf8",
       );
-      await writeJson(path.join(root, "packages/local-lib/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/local-lib/package.json"), {
         name: "fixture-local-lib",
         version: "1.0.0",
       });
       await fs.writeFile(
-        path.join(root, "packages/local-lib/index.js"),
+        path.join(repositoryDir, "packages/local-lib/index.js"),
         "export const local = 1;\n",
         "utf8",
       );
-      await writeJson(path.join(root, "packages/dev-local/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/dev-local/package.json"), {
         name: "fixture-dev-local",
         version: "2.0.0",
       });
       await fs.writeFile(
-        path.join(root, "packages/dev-local/index.js"),
+        path.join(repositoryDir, "packages/dev-local/index.js"),
         "export const dev = 1;\n",
         "utf8",
       );
-      await writeJson(path.join(root, "packages/unrelated/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/unrelated/package.json"), {
         name: "fixture-unrelated-workspace",
         version: "1.0.0",
         dependencies: { "fixture-unrelated-registry": `${origin}/${unrelated}` },
@@ -173,10 +173,12 @@ describe("ws-deploy CLI E2E", () => {
       await execa(
         "npm",
         ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: root },
+        { cwd: repositoryDir },
       );
-      const sourceLockfile = await readJson<NpmLockfile>(path.join(root, "package-lock.json"));
-      const deployDir = path.join(root, "deployment");
+      const sourceLockfile = await readJson<NpmLockfile>(
+        path.join(repositoryDir, "package-lock.json"),
+      );
+      const deploymentDir = path.join(repositoryDir, "deployment");
 
       const cli = await execa(
         "node",
@@ -186,20 +188,20 @@ describe("ws-deploy CLI E2E", () => {
           CLI_PATH,
           "--target",
           "fixture-app",
-          "--repo",
-          root,
-          "--deploy-dir",
-          deployDir,
+          "--repository-dir",
+          repositoryDir,
+          "--deployment-dir",
+          deploymentDir,
           "--install",
           "npm-ci",
           "--include-dev",
         ],
         {
-          cwd: PROJECT_ROOT,
+          cwd: PROJECT_DIR,
         },
       );
       const projectedLockfile = await readJson<NpmLockfile>(
-        path.join(deployDir, "package-lock.json"),
+        path.join(deploymentDir, "package-lock.json"),
       );
 
       assert.match(cli.stdout, /Deployment ready:/);
@@ -214,67 +216,67 @@ describe("ws-deploy CLI E2E", () => {
         sourceLockfile.packages["node_modules/fixture-consumer-b"]?.integrity,
       );
 
-      const rootShared = await readJson<PackageJson>(
-        path.join(deployDir, "node_modules/fixture-shared/package.json"),
+      const deploymentShared = await readJson<PackageJson>(
+        path.join(deploymentDir, "node_modules/fixture-shared/package.json"),
       );
       const nestedShared = await readJson<PackageJson>(
         path.join(
-          deployDir,
+          deploymentDir,
           "node_modules/fixture-consumer-b/node_modules/fixture-shared/package.json",
         ),
       );
       const localLib = await readJson<PackageJson>(
-        path.join(deployDir, "node_modules/fixture-local-lib/package.json"),
+        path.join(deploymentDir, "node_modules/fixture-local-lib/package.json"),
       );
       const devLocal = await readJson<PackageJson>(
-        path.join(deployDir, "node_modules/fixture-dev-local/package.json"),
+        path.join(deploymentDir, "node_modules/fixture-dev-local/package.json"),
       );
       const devRegistryPackage = await readJson<PackageJson>(
-        path.join(deployDir, "node_modules/fixture-dev-registry/package.json"),
+        path.join(deploymentDir, "node_modules/fixture-dev-registry/package.json"),
       );
 
-      assert.equal(rootShared.version, "1.0.0");
+      assert.equal(deploymentShared.version, "1.0.0");
       assert.equal(nestedShared.version, "2.0.0");
       assert.equal(localLib.version, "1.0.0");
       assert.equal(devLocal.version, "2.0.0");
       assert.equal(devRegistryPackage.version, "4.0.0");
-      await assertMissing(path.join(deployDir, "node_modules/fixture-unrelated-workspace"));
-      await assertMissing(path.join(deployDir, "node_modules/fixture-unrelated-registry"));
+      await assertMissing(path.join(deploymentDir, "node_modules/fixture-unrelated-workspace"));
+      await assertMissing(path.join(deploymentDir, "node_modules/fixture-unrelated-registry"));
     } finally {
       await closeServer(server);
-      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(repositoryDir, { recursive: true, force: true });
     }
   });
 
   it("runs npm ci when a retained registry package requires a peer dependency", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npm-ci-peer-"));
+    const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npm-ci-peer-"));
     const tarballs = new Map<string, string>();
     const { server, origin } = await startTarballServer(tarballs);
 
     try {
-      const peer = await packPackage(root, tarballs, {
+      const peer = await packPackage(repositoryDir, tarballs, {
         name: "fixture-peer",
         version: "1.0.0",
       });
-      const consumer = await packPackage(root, tarballs, {
+      const consumer = await packPackage(repositoryDir, tarballs, {
         name: "fixture-peer-consumer",
         version: "1.0.0",
         peerDependencies: { "fixture-peer": "^1.0.0" },
       });
 
-      await writeJson(path.join(root, "package.json"), {
-        name: "fixture-root",
+      await writeJson(path.join(repositoryDir, "package.json"), {
+        name: "fixture-repository",
         private: true,
         workspaces: ["packages/*"],
         devDependencies: { "fixture-peer": `${origin}/${peer}` },
       });
-      await writeJson(path.join(root, "packages/app/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
         name: "fixture-app",
         version: "1.0.0",
         dependencies: { "fixture-peer-consumer": `${origin}/${consumer}` },
       });
       await fs.writeFile(
-        path.join(root, "packages/app/index.js"),
+        path.join(repositoryDir, "packages/app/index.js"),
         "export const app = 1;\n",
         "utf8",
       );
@@ -282,10 +284,12 @@ describe("ws-deploy CLI E2E", () => {
       await execa(
         "npm",
         ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: root },
+        { cwd: repositoryDir },
       );
-      const sourceLockfile = await readJson<NpmLockfile>(path.join(root, "package-lock.json"));
-      const deployDir = path.join(root, "deployment");
+      const sourceLockfile = await readJson<NpmLockfile>(
+        path.join(repositoryDir, "package-lock.json"),
+      );
+      const deploymentDir = path.join(repositoryDir, "deployment");
 
       await execa(
         "node",
@@ -295,20 +299,20 @@ describe("ws-deploy CLI E2E", () => {
           CLI_PATH,
           "--target",
           "fixture-app",
-          "--repo",
-          root,
-          "--deploy-dir",
-          deployDir,
+          "--repository-dir",
+          repositoryDir,
+          "--deployment-dir",
+          deploymentDir,
           "--install",
           "npm-ci",
         ],
-        { cwd: PROJECT_ROOT },
+        { cwd: PROJECT_DIR },
       );
       const projectedLockfile = await readJson<NpmLockfile>(
-        path.join(deployDir, "package-lock.json"),
+        path.join(deploymentDir, "package-lock.json"),
       );
       const installedPeer = await readJson<PackageJson>(
-        path.join(deployDir, "node_modules/fixture-peer/package.json"),
+        path.join(deploymentDir, "node_modules/fixture-peer/package.json"),
       );
 
       assert.equal(installedPeer.version, "1.0.0");
@@ -318,35 +322,35 @@ describe("ws-deploy CLI E2E", () => {
       );
     } finally {
       await closeServer(server);
-      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(repositoryDir, { recursive: true, force: true });
     }
   });
   it("uses the npm configuration supplied by --npmrc", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npmrc-"));
+    const temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npmrc-"));
 
     try {
-      const repo = path.join(root, "repo");
-      await writeJson(path.join(repo, "package.json"), {
-        name: "fixture-root",
+      const repositoryDir = path.join(temporaryDir, "repo");
+      await writeJson(path.join(repositoryDir, "package.json"), {
+        name: "fixture-repository",
         private: true,
         workspaces: ["packages/*"],
       });
-      await writeJson(path.join(repo, "packages/app/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
         name: "fixture-app",
         version: "1.0.0",
         dependencies: { "fixture-local": "workspace:*" },
       });
-      await writeJson(path.join(repo, "packages/local/package.json"), {
+      await writeJson(path.join(repositoryDir, "packages/local/package.json"), {
         name: "fixture-local",
         version: "1.0.0",
       });
-      await writeJson(path.join(repo, "package-lock.json"), {
-        name: "fixture-root",
+      await writeJson(path.join(repositoryDir, "package-lock.json"), {
+        name: "fixture-repository",
         lockfileVersion: 3,
         requires: true,
         packages: {
           "": {
-            name: "fixture-root",
+            name: "fixture-repository",
             workspaces: ["packages/*"],
           },
           "packages/app": {
@@ -369,35 +373,43 @@ describe("ws-deploy CLI E2E", () => {
         },
       });
 
-      const baseArgs = ["--import", "tsx", CLI_PATH, "--target", "fixture-app", "--repo", repo];
-      const defaultDeployDir = path.join(root, "default-deployment");
-      await execa("node", [...baseArgs, "--deploy-dir", defaultDeployDir], {
-        cwd: PROJECT_ROOT,
+      const baseArgs = [
+        "--import",
+        "tsx",
+        CLI_PATH,
+        "--target",
+        "fixture-app",
+        "--repository-dir",
+        repositoryDir,
+      ];
+      const defaultDeploymentDir = path.join(temporaryDir, "default-deployment");
+      await execa("node", [...baseArgs, "--deployment-dir", defaultDeploymentDir], {
+        cwd: PROJECT_DIR,
       });
-      await fs.access(path.join(defaultDeployDir, "node_modules/fixture-local/package.json"));
+      await fs.access(path.join(defaultDeploymentDir, "node_modules/fixture-local/package.json"));
 
-      const npmrc = path.join(root, "install.npmrc");
+      const npmrc = path.join(temporaryDir, "install.npmrc");
       await fs.writeFile(npmrc, "dry-run=true\n", "utf8");
-      const configuredDeployDir = path.join(root, "configured-deployment");
+      const configuredDeploymentDir = path.join(temporaryDir, "configured-deployment");
       const configured = await execa(
         "node",
         [
           ...baseArgs,
-          "--deploy-dir",
-          configuredDeployDir,
+          "--deployment-dir",
+          configuredDeploymentDir,
           "--npmrc",
-          path.relative(PROJECT_ROOT, npmrc),
+          path.relative(PROJECT_DIR, npmrc),
         ],
-        { cwd: PROJECT_ROOT, reject: false },
+        { cwd: PROJECT_DIR, reject: false },
       );
 
       assert.equal(configured.exitCode, 1);
       assert.match(configured.stderr, /Local dependency "fixture-local" is not present/);
       await assertMissing(
-        path.join(configuredDeployDir, "node_modules/fixture-local/package.json"),
+        path.join(configuredDeploymentDir, "node_modules/fixture-local/package.json"),
       );
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(temporaryDir, { recursive: true, force: true });
     }
   });
 });

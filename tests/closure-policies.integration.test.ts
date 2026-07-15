@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { after, describe, it } from "node:test";
 
 import { computeRuntimeClosure } from "../src/closure.js";
-import { loadRootLockfile } from "../src/lockfile.js";
+import { loadRepositoryLockfile } from "../src/lockfile.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "../src/workspace-graph.js";
 
 async function writeJson(file: string, value: unknown): Promise<void> {
@@ -14,14 +14,14 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.writeFile(file, `${JSON.stringify(value, undefined, 2)}\n`, "utf8");
 }
 
-async function buildPolicyRepo(requiredName = "required"): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-policies-"));
-  await writeJson(path.join(root, "package.json"), {
-    name: "root",
+async function buildPolicyRepository(requiredName = "required"): Promise<string> {
+  const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-policies-"));
+  await writeJson(path.join(repositoryDir, "package.json"), {
+    name: "repository",
     private: true,
     workspaces: ["packages/*"],
   });
-  await writeJson(path.join(root, "packages/app/package.json"), {
+  await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
     name: "app",
     version: "1.0.0",
     dependencies: {
@@ -35,12 +35,12 @@ async function buildPolicyRepo(requiredName = "required"): Promise<string> {
     },
     peerDependencies: { peerpkg: "^5.0.0" },
   });
-  await fs.writeFile(path.join(root, "packages/app/index.js"), "export const app = 1;\n");
-  await writeJson(path.join(root, "package-lock.json"), {
-    name: "root",
+  await fs.writeFile(path.join(repositoryDir, "packages/app/index.js"), "export const app = 1;\n");
+  await writeJson(path.join(repositoryDir, "package-lock.json"), {
+    name: "repository",
     lockfileVersion: 3,
     packages: {
-      "": { name: "root" },
+      "": { name: "repository" },
       "packages/app": { name: "app", version: "1.0.0" },
       "node_modules/app": { resolved: "packages/app", link: true },
       "node_modules/required": {
@@ -71,15 +71,15 @@ async function buildPolicyRepo(requiredName = "required"): Promise<string> {
       },
     },
   });
-  return root;
+  return repositoryDir;
 }
 
 async function closureFor(
-  root: string,
+  repositoryDir: string,
   options: { includeDevDependencies?: boolean; includeOptionalDependencies?: boolean },
 ) {
-  const graph = await loadWorkspaceGraph(root);
-  const lockfile = await loadRootLockfile(root);
+  const graph = await loadWorkspaceGraph(repositoryDir);
+  const lockfile = await loadRepositoryLockfile(repositoryDir);
   return computeRuntimeClosure(graph, lockfile, resolveTargetWorkspace(graph, "app"), options);
 }
 
@@ -87,16 +87,16 @@ describe("runtime closure policies", () => {
   const cleanups: string[] = [];
 
   after(async () => {
-    for (const root of cleanups) {
-      await fs.rm(root, { recursive: true, force: true });
+    for (const repositoryDir of cleanups) {
+      await fs.rm(repositoryDir, { recursive: true, force: true });
     }
   });
 
   it("includes enabled optional dependencies, resolves aliases, and warns for missing optionals", async () => {
-    const root = await buildPolicyRepo();
-    cleanups.push(root);
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
 
-    const closure = await closureFor(root, {
+    const closure = await closureFor(repositoryDir, {
       includeOptionalDependencies: true,
     });
     const registry = [...closure.registryPackages.values()]
@@ -110,15 +110,15 @@ describe("runtime closure policies", () => {
     );
     assert.equal(registry.includes("peerpkg@5.1.0"), false);
     assert.deepEqual(closure.warnings, [
-      'Optional registry dependency "optional-missing" (from "packages/app") was not found in the root lockfile; it will be omitted from the filtered lockfile.',
+      'Optional registry dependency "optional-missing" (from "packages/app") was not found in the repository lockfile; it will be omitted from the filtered lockfile.',
     ]);
   });
 
   it("excludes dev, optional, and peer dependencies by default", async () => {
-    const root = await buildPolicyRepo();
-    cleanups.push(root);
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
 
-    const closure = await closureFor(root, {});
+    const closure = await closureFor(repositoryDir, {});
     const registry = [...closure.registryPackages.values()]
       .map((entry) => `${entry.name}@${entry.version}`)
       .toSorted();
@@ -128,10 +128,10 @@ describe("runtime closure policies", () => {
   });
 
   it("includes target dev dependencies when enabled", async () => {
-    const root = await buildPolicyRepo();
-    cleanups.push(root);
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
 
-    const closure = await closureFor(root, { includeDevDependencies: true });
+    const closure = await closureFor(repositoryDir, { includeDevDependencies: true });
     const registry = [...closure.registryPackages.values()]
       .map((entry) => `${entry.name}@${entry.version}`)
       .toSorted();
@@ -141,11 +141,11 @@ describe("runtime closure policies", () => {
   });
 
   it("fails when a required runtime dependency is absent from the lockfile", async () => {
-    const root = await buildPolicyRepo("missing-required");
-    cleanups.push(root);
+    const repositoryDir = await buildPolicyRepository("missing-required");
+    cleanups.push(repositoryDir);
 
     await assert.rejects(
-      closureFor(root, {}),
+      closureFor(repositoryDir, {}),
       /Runtime dependency "missing-required".*package-lock\.json is out of sync/s,
     );
   });

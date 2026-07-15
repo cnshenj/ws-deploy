@@ -1,4 +1,4 @@
-/** Projects the root lockfile into a filtered deployment lockfile (SPEC §7.4 / FR7-8, Step 6). */
+/** Projects the repository lockfile into a filtered deployment lockfile (SPEC §7.4 / FR7-8). */
 
 import type {
   ClosureRegistryPackage,
@@ -13,11 +13,11 @@ import type {
 const NODE_MODULES_PREFIX = "node_modules/";
 const NESTED_MARKER = "/node_modules/";
 
-/** The parent hoisting scope of a deployment scope directory (root is `""`). */
+/** The parent hoisting scope (`""` is the deployment package scope). */
 function parentScope(scope: string): string {
   const idx = scope.lastIndexOf(NESTED_MARKER);
   // A nested package hoists to its enclosing package; everything else (a
-  // top-level `node_modules/*` or a local dep dir) hoists to the root.
+  // top-level `node_modules/*` or a local dependency) hoists to the deployment package.
   return idx >= 0 ? scope.slice(0, idx) : "";
 }
 
@@ -29,26 +29,25 @@ function placementKey(scope: string, name: string): string {
 /**
  * Greedy "most-used" hoisting of the registry dependency graph.
  *
- * Every consumer resolves the exact version pinned in the root lockfile; the
- * most-used version of each name is hoisted to the deployment root and conflicting
- * versions are nested under the consumer that needs them. This re-roots the
- * monorepo's layout offline, consistent with npm's lockfile semantics.
+ * Every consumer resolves the exact version pinned in the repository lockfile;
+ * the most-used version of each name is hoisted to the deployment's top-level
+ * `node_modules`, and conflicting versions are nested under their consumers.
  */
 class RegistryPlacer {
   /** scope -> (name -> version) placed directly in that scope's node_modules. */
   private readonly placed = new Map<string, Map<string, string>>();
   /** placement keys already expanded (guards cycles and duplicate work). */
   private readonly visited = new Set<string>();
-  /** name -> version chosen for the root node_modules. */
-  private readonly rootVersion: Map<string, string>;
+  /** name -> version chosen for the deployment's top-level node_modules. */
+  private readonly deploymentVersions: Map<string, string>;
 
   constructor(
     private readonly graph: Map<string, ClosureRegistryPackage>,
-    private readonly rootLockfile: NpmLockfile,
+    private readonly repositoryLockfile: NpmLockfile,
     private readonly packages: Record<string, LockfilePackageEntry>,
     topDemands: RegistryDemand[],
   ) {
-    this.rootVersion = this.computeRootVersions(topDemands);
+    this.deploymentVersions = this.computeDeploymentVersions(topDemands);
   }
 
   /** Place `instanceKey` and its subtree relative to `consumerScope`. */
@@ -67,7 +66,7 @@ class RegistryPlacer {
       // A scope hosts at most one version per name; reaching here is a bug.
       throw new Error(
         `ws-deploy placement conflict: ${node.name}@${existing} vs @${node.version} ` +
-          `at "${targetScope || "<root>"}".`,
+          `at "${targetScope || "<deployment>"}".`,
       );
     }
     scopeMap.set(node.name, node.version);
@@ -78,7 +77,7 @@ class RegistryPlacer {
     }
     this.visited.add(key);
 
-    const source = this.rootLockfile.packages[node.lockfileKey];
+    const source = this.repositoryLockfile.packages[node.lockfileKey];
     if (source) {
       this.packages[key] = { ...source };
     }
@@ -115,14 +114,14 @@ class RegistryPlacer {
         break;
       }
     }
-    // Not yet on the path: hoist to root if it is the most-used version.
-    return this.rootVersion.get(node.name) === node.version ? "" : consumerScope;
+    // Not yet on the path: hoist to the deployment package if it is the most-used version.
+    return this.deploymentVersions.get(node.name) === node.version ? "" : consumerScope;
   }
 
-  /** Choose the root-level version of each name (most-used; root deps win). */
-  private computeRootVersions(topDemands: RegistryDemand[]): Map<string, string> {
+  /** Choose each top-level deployment version (most-used; direct dependencies win). */
+  private computeDeploymentVersions(topDemands: RegistryDemand[]): Map<string, string> {
     const counts = new Map<string, Map<string, number>>();
-    const rootDirect = new Map<string, string>();
+    const directDeploymentVersions = new Map<string, string>();
     const bump = (name: string, version: string): void => {
       let versions = counts.get(name);
       if (!versions) {
@@ -139,7 +138,7 @@ class RegistryPlacer {
       }
       bump(node.name, node.version);
       if (demand.location === "") {
-        rootDirect.set(node.name, node.version); // the root package pins root
+        directDeploymentVersions.set(node.name, node.version);
       }
     }
     for (const node of this.graph.values()) {
@@ -151,11 +150,11 @@ class RegistryPlacer {
       }
     }
 
-    const rootVersion = new Map<string, string>();
+    const deploymentVersions = new Map<string, string>();
     for (const [name, versions] of counts) {
-      const pinned = rootDirect.get(name);
+      const pinned = directDeploymentVersions.get(name);
       if (pinned !== undefined) {
-        rootVersion.set(name, pinned);
+        deploymentVersions.set(name, pinned);
         continue;
       }
       let best: string | undefined;
@@ -168,10 +167,10 @@ class RegistryPlacer {
         }
       }
       if (best !== undefined) {
-        rootVersion.set(name, best);
+        deploymentVersions.set(name, best);
       }
     }
-    return rootVersion;
+    return deploymentVersions;
   }
 }
 
@@ -189,32 +188,32 @@ function toStringMap(map: DependencyMap | undefined): Record<string, string> | u
   return out;
 }
 
-/** Build the root ("") package entry from the rewritten deployment manifest. */
-function buildRootEntry(rootManifest: PackageJson): LockfilePackageEntry {
+/** Build the deployment package entry (`packages[""]`) from its rewritten manifest. */
+function buildDeploymentEntry(deploymentManifest: PackageJson): LockfilePackageEntry {
   const entry: LockfilePackageEntry = {
-    name: rootManifest.name,
-    version: rootManifest.version,
+    name: deploymentManifest.name,
+    version: deploymentManifest.version,
   };
-  const dependencies = toStringMap(rootManifest.dependencies);
+  const dependencies = toStringMap(deploymentManifest.dependencies);
   if (dependencies) {
     entry.dependencies = dependencies;
   }
-  const devDependencies = toStringMap(rootManifest.devDependencies);
+  const devDependencies = toStringMap(deploymentManifest.devDependencies);
   if (devDependencies) {
     entry.devDependencies = devDependencies;
   }
-  const optionalDependencies = toStringMap(rootManifest.optionalDependencies);
+  const optionalDependencies = toStringMap(deploymentManifest.optionalDependencies);
   if (optionalDependencies) {
     entry.optionalDependencies = optionalDependencies;
   }
-  const peerDependencies = toStringMap(rootManifest.peerDependencies);
+  const peerDependencies = toStringMap(deploymentManifest.peerDependencies);
   if (peerDependencies) {
     entry.peerDependencies = peerDependencies;
   }
-  if (typeof rootManifest.bin === "string") {
-    entry.bin = rootManifest.bin;
+  if (typeof deploymentManifest.bin === "string") {
+    entry.bin = deploymentManifest.bin;
   } else {
-    const bin = toStringMap(rootManifest.bin);
+    const bin = toStringMap(deploymentManifest.bin);
     if (bin) {
       entry.bin = bin;
     }
@@ -223,31 +222,31 @@ function buildRootEntry(rootManifest: PackageJson): LockfilePackageEntry {
 }
 
 /**
- * Project the root lockfile into a filtered lockfile for the deployment root.
+ * Project the repository lockfile into a filtered deployment lockfile.
  *
- * The result contains only the closure: the target as root, local
- * dependencies as `file:` links under the deployment's local package directory, and every reachable
- * registry package with its exact version/integrity copied from the root
- * lockfile. Unrelated packages are omitted.
+ * The result contains only the closure: the target as the deployment package,
+ * local dependencies as `file:` links, and every reachable registry package
+ * with exact version/integrity metadata copied from the repository lockfile.
  */
 export function projectLockfile(
-  rootLockfile: NpmLockfile,
+  repositoryLockfile: NpmLockfile,
   closure: RuntimeClosure,
-  rootManifest: PackageJson,
+  deploymentManifest: PackageJson,
 ): NpmLockfile {
-  const lockfileVersion = rootLockfile.lockfileVersion >= 2 ? rootLockfile.lockfileVersion : 3;
+  const lockfileVersion =
+    repositoryLockfile.lockfileVersion >= 2 ? repositoryLockfile.lockfileVersion : 3;
 
   const packages: Record<string, LockfilePackageEntry> = {
-    "": buildRootEntry(rootManifest),
+    "": buildDeploymentEntry(deploymentManifest),
   };
 
   // Local (workspace/file) dependencies become deployment-local file links.
   for (const local of closure.localDependencies.values()) {
     packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
-      resolved: local.deployRelativePath,
+      resolved: local.deploymentRelativePath,
       link: true,
     };
-    packages[local.deployRelativePath] = {
+    packages[local.deploymentRelativePath] = {
       name: local.name,
       version: local.version,
     };
@@ -256,11 +255,11 @@ export function projectLockfile(
   // Registry dependencies: hoist by most-used version, nesting conflicts.
   const placer = new RegistryPlacer(
     closure.registryPackages,
-    rootLockfile,
+    repositoryLockfile,
     packages,
     closure.topDemands,
   );
-  // Root demands first, then locals, each in a stable order (NFR1).
+  // Deployment package demands first, then locals, each in a stable order (NFR1).
   const demands = [...closure.topDemands].toSorted((a, b) => {
     if (a.location !== b.location) {
       if (a.location === "") {
@@ -278,8 +277,8 @@ export function projectLockfile(
   }
 
   return {
-    name: rootManifest.name,
-    version: rootManifest.version,
+    name: deploymentManifest.name,
+    version: deploymentManifest.version,
     lockfileVersion,
     requires: true,
     packages,

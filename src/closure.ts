@@ -30,9 +30,9 @@ interface ClosureContext {
   warnings: string[];
 }
 
-/** Convert an absolute path to a forward-slash lockfile key relative to repo root. */
-function toLockfileKey(repoRoot: string, absPath: string): string {
-  const rel = path.relative(repoRoot, absPath).replace(/\\/g, "/");
+/** Convert an absolute path to a forward-slash lockfile key relative to the repository. */
+function toLockfileKey(repositoryDir: string, absPath: string): string {
+  const rel = path.relative(repositoryDir, absPath).replace(/\\/g, "/");
   return rel;
 }
 
@@ -67,7 +67,7 @@ export async function computeRuntimeClosure(
     warnings: [],
   };
 
-  const targetKey = toLockfileKey(graph.repoRoot, target.path);
+  const targetKey = toLockfileKey(graph.repositoryDir, target.path);
   const edges = runtimeEdges(target, ctx.includeOptional);
   if (options.includeDevDependencies) {
     edges.push(...target.devDependencies);
@@ -173,15 +173,15 @@ async function addLocalDependency(ctx: ClosureContext, input: LocalInput): Promi
   }
   ctx.visitedLocal.add(input.name);
 
-  const deployRelativePath = `${LOCAL_PACKAGES_DIR}/${input.name}`;
+  const deploymentRelativePath = `${LOCAL_PACKAGES_DIR}/${input.name}`;
   ctx.localDependencies.set(input.name, {
     name: input.name,
     sourceType: input.sourceType,
     sourcePath: input.sourcePath,
     version: input.version,
     manifest: input.manifest,
-    deployRelativePath,
-    deployReference: `file:./${deployRelativePath}`,
+    deploymentRelativePath,
+    deploymentReference: `file:./${deploymentRelativePath}`,
   });
 
   // Recurse into the local dependency's own runtime edges (EC2, EC3).
@@ -189,12 +189,12 @@ async function addLocalDependency(ctx: ClosureContext, input: LocalInput): Promi
   const edges = ctx.includeOptional
     ? [...classified.dependencies, ...classified.optionalDependencies]
     : classified.dependencies;
-  const fromKey = toLockfileKey(ctx.graph.repoRoot, input.sourcePath);
+  const fromKey = toLockfileKey(ctx.graph.repositoryDir, input.sourcePath);
   for (const edge of edges) {
     // eslint-disable-next-line no-await-in-loop -- traversal order is intentional
     const instanceKey = await traverseEdge(ctx, edge, input.sourcePath, fromKey);
     if (instanceKey) {
-      ctx.topDemands.push({ location: deployRelativePath, instanceKey });
+      ctx.topDemands.push({ location: deploymentRelativePath, instanceKey });
     }
   }
 }
@@ -215,18 +215,19 @@ function traverseRegistry(
       // A missing optional dependency is legitimate (e.g. platform-specific
       // packages absent from the lockfile for this platform); omit it.
       ctx.warnings.push(
-        `Optional registry dependency "${depName}" (from "${fromKey || "<root>"}") was not ` +
-          `found in the root lockfile; it will be omitted from the filtered lockfile.`,
+        `Optional registry dependency "${depName}" (from "${fromKey || "<repository>"}") was not ` +
+          `found in the repository lockfile; it will be omitted from the filtered lockfile.`,
       );
       return undefined;
     }
-    // A required runtime dependency with no lockfile entry means the root
+    // A required runtime dependency with no lockfile entry means the repository
     // lockfile is out of sync with the manifests. Omitting it would ship a
     // broken artifact, so fail loudly (SPEC §3.1, §11.1).
     throw new Error(
-      `Runtime dependency "${depName}" (required by "${fromKey || "<root>"}") is reachable at ` +
-        `runtime but has no entry in the root lockfile. package-lock.json is out of sync with ` +
-        `the workspace manifests; run "npm install" at the repo root to refresh it, then retry.`,
+      `Runtime dependency "${depName}" (required by "${fromKey || "<repository>"}") is reachable at ` +
+        `runtime but has no entry in the repository lockfile. package-lock.json is out of sync ` +
+        `with the workspace manifests; run "npm install" in the repository directory to refresh ` +
+        `it, then retry.`,
     );
   }
   const { key, entry } = resolved;

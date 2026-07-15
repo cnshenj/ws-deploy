@@ -4,24 +4,24 @@ Create a self-contained deployment folder for one workspace package in a multi-w
 monorepo.
 
 `ws-deploy` computes the target package's runtime dependency closure, copies local workspace and
-`file:` dependencies, projects the root lockfile into a minimal deployment lockfile, and installs the
-result as a standalone package root. Unrelated workspaces and their dependency branches are left
-out.
+`file:` dependencies, projects the repository lockfile into a minimal deployment lockfile, and
+installs the result as a standalone package. Unrelated workspaces and their dependency branches
+are left out.
 
 ## Requirements
 
 - Node.js 24 or later
 - An npm monorepo containing multiple workspaces
-- A root `package-lock.json` or `npm-shrinkwrap.json` with a `packages` map (lockfile version 2 or
-  later)
+- A repository `package-lock.json` or `npm-shrinkwrap.json` with a `packages` map (lockfile version
+  2 or later)
 - Runtime build output already present when a package publishes built files such as `dist/`
 
-The root lockfile is the source of truth. If a required runtime dependency is missing from it, run
-`npm install` at the repository root to refresh the lockfile before using `ws-deploy`.
+The repository lockfile is the source of truth. If a required runtime dependency is missing from
+it, run `npm install` in the repository directory to refresh the lockfile before using `ws-deploy`.
 
 ## Installation
 
-Install the package as a development dependency in the workspace root:
+Install the package as a development dependency in the repository directory:
 
 ```sh
 npm install --save-dev ws-deploy
@@ -37,17 +37,17 @@ Deploy the workspace whose `package.json` name is `@acme/api`:
 npx ws-deploy --target @acme/api
 ```
 
-By default, this creates `./deploy/@acme/api` and runs `npm ci` there. The resulting folder is the
-deployment root: the target package's rewritten `package.json` is at its top level rather than
-under its original workspace path.
+By default, this creates `./deploy/@acme/api` and runs `npm ci` there. The target package's rewritten
+`package.json` is at the top level of this deployment directory rather than under its original
+workspace path.
 
 A typical CI invocation uses an explicit output path:
 
 ```sh
 npx ws-deploy \
-  --repo . \
+  --repository-dir . \
   --target @acme/api \
-  --deploy-dir ./artifacts/api
+  --deployment-dir ./artifacts/api
 ```
 
 The deployment folder can then be passed to a container build, hosting platform, or separate
@@ -56,19 +56,19 @@ archiving tool.
 ## Why `ws-deploy`
 
 `ws-deploy` works much like [`pnpm deploy`](https://pnpm.io/cli/deploy), but for npm: both turn one
-workspace package into a standalone deployment root, include its local workspace dependencies,
+workspace package into a standalone deployment directory, include its local workspace dependencies,
 and can produce an isolated `node_modules`. By contrast,
 [`turbo prune`](https://turborepo.dev/docs/reference/prune) creates a partial monorepo intended for
 subsequent install and build steps.
 
 |                               | `ws-deploy`                                                    | `pnpm deploy`                                         | `turbo prune`                                               |
 | ----------------------------- | -------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| Primary output                | Standalone npm package root                                    | Standalone pnpm package root                          | Partial monorepo for building the target                    |
+| Primary output                | Standalone npm package directory                               | Standalone pnpm package directory                     | Partial monorepo for building the target                    |
 | Lockfile                      | New, projected `package-lock.json`                             | Dedicated lockfile projected from the shared lockfile | Pruned copy of the repository lockfile                      |
 | Dependency installation       | Configurable: `npm ci`, `npm install`, or none                 | Installed into an isolated `node_modules`             | Not installed                                               |
 | Repository layout retained    | No (intentional)                                               | No (intentional)                                      | Yes                                                         |
 | Local packages                | Packed locally and rewritten to deployment-local `file:` paths | Installed as internal dependencies                    | Retained as packages in the partial workspace               |
-| Package-manager prerequisites | npm workspaces and a root npm lockfile                         | A pnpm workspace; current defaults require injection  | A Turborepo monorepo                                        |
+| Package-manager prerequisites | npm workspaces and a repository lockfile                       | A pnpm workspace; current defaults require injection  | A Turborepo monorepo                                        |
 | Best fit                      | Deploying one npm workspace directly                           | Deploying one package from a pnpm workspace           | Creating a smaller build context before install/build steps |
 
 ### Benefits
@@ -89,13 +89,13 @@ ws-deploy --target <workspace-name> [options]
 | Option                   | Description                                                          | Default             |
 | ------------------------ | -------------------------------------------------------------------- | ------------------- |
 | `-t, --target <name>`    | Target workspace package name. Required.                             |                     |
-| `-r, --repo <dir>`       | Monorepo root.                                                       | Current directory   |
-| `-o, --deploy-dir <dir>` | Deployment output directory.                                         | `./deploy/<target>` |
+| `-r, --repository-dir <dir>` | Monorepo directory.                                              | Current directory   |
+| `-o, --deployment-dir <dir>` | Deployment output directory.                                      | `./deploy/<target>` |
 | `-m, --install <mode>`   | Installation strategy: `npm-ci`, `npm-install`, or `none`.           | `npm-ci`            |
 | `--npmrc <path>`         | npm configuration file used by the installation step.                | User npm config     |
 | `--include-dev`          | Include the target workspace's `devDependencies`.                    | `false`             |
 | `--include-optional`     | Include optional dependencies throughout the closure.                | `false`             |
-| `--keep-deploy-dir`      | Keep the existing deployment directory instead of deleting it first. | `false`             |
+| `--keep-deployment-dir`  | Keep the existing deployment directory instead of deleting it first. | `false`             |
 | `-h, --help`             | Show command help.                                                   |                     |
 
 The target is a package name from a workspace `package.json`, not a filesystem path.
@@ -146,7 +146,7 @@ and is not copied into the deployment folder.
 By default, the dependency closure contains:
 
 - The target workspace's `dependencies`
-- Transitive registry dependencies at the exact versions in the root lockfile
+- Transitive registry dependencies at the exact versions in the repository lockfile
 - Reachable workspace dependencies
 - Reachable `file:` and `link:` dependencies
 - Resolved peer dependencies required by retained registry packages
@@ -154,13 +154,13 @@ By default, the dependency closure contains:
 Dependency policies are applied as follows:
 
 - `--include-dev` adds the target workspace's `devDependencies` and their reachable runtime
-  dependencies. The target's development dependencies remain in the deployment root manifest;
+  dependencies. The target's development dependencies remain in the deployment manifest;
   development dependencies of copied local packages are not included.
 - `--include-optional` traverses `optionalDependencies` throughout the closure. Missing optional
   registry packages are omitted with a warning.
 - Peers declared by the target or copied local packages are not separate runtime edges. Resolved
   peers of retained registry packages are included at the exact versions and placements from the
-  root lockfile because `npm ci` requires a complete install graph. Missing optional peers are
+  repository lockfile because `npm ci` requires a complete install graph. Missing optional peers are
   omitted.
 - Unrelated workspaces and dependency branches are always excluded.
 
@@ -185,13 +185,13 @@ deploy/@acme/api/
 ```
 
 Workspace protocols and local path references are rewritten to deployment-local `file:` references.
-For example, `workspace:*` becomes `file:./local-packages/@acme/lib` in the root manifest. Registry
+For example, `workspace:*` becomes `file:./local-packages/@acme/lib` in the deployment manifest. Registry
 packages remain registry dependencies, with their exact `version`, `resolved`, and `integrity`
-metadata copied from the root lockfile where available.
+metadata copied from the repository lockfile where available.
 
-The generated lockfile may place shared versions at the deployment root and conflicting versions
-under their consumers. Placement is recalculated for the target's dependency closure rather than
-copied from the monorepo's `node_modules` layout.
+The generated lockfile may place shared versions in the deployment's top-level `node_modules` and
+conflicting versions under their consumers. Placement is recalculated for the target's dependency
+closure rather than copied from the monorepo's `node_modules` layout.
 
 ## Programmatic API
 
@@ -203,29 +203,30 @@ import * as path from "node:path";
 import { runWsDeploy } from "ws-deploy";
 
 const result = await runWsDeploy({
-  repoRoot: process.cwd(),
+  repositoryDir: process.cwd(),
   targetWorkspace: "@acme/api",
-  deployDir: path.resolve("artifacts/api"),
+  deploymentDir: path.resolve("artifacts/api"),
   // installMode defaults to "npm-ci"
 });
 
-console.log(result.deployDir);
+console.log(result.deploymentDir);
 console.log(result.warnings);
 ```
 
-Unlike the CLI, the programmatic API requires `repoRoot`, `targetWorkspace`, and `deployDir`.
+Unlike the CLI, the programmatic API requires `repositoryDir`, `targetWorkspace`, and
+`deploymentDir`.
 Optional settings are:
 
 ```ts
 interface DeployOptions {
-  repoRoot: string;
+  repositoryDir: string;
   targetWorkspace: string;
-  deployDir: string;
+  deploymentDir: string;
   installMode?: "npm-ci" | "npm-install" | "none";
   npmrc?: string;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
-  keepExistingDeployDir?: boolean;
+  keepExistingDeploymentDir?: boolean;
 }
 ```
 
@@ -243,7 +244,7 @@ result.
 
 The detailed behavioral contract and architecture are documented in [SPEC.md](SPEC.md).
 
-Install dependencies and run the checks from the repository root:
+Install dependencies and run the checks from the repository directory:
 
 ```sh
 npm ci

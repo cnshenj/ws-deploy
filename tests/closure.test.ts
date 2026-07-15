@@ -2,25 +2,25 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { computeRuntimeClosure } from "../src/closure.js";
-import { loadRootLockfile } from "../src/lockfile.js";
-import { buildFixtureRepo, cleanupFixture } from "./fixture.js";
+import { loadRepositoryLockfile } from "../src/lockfile.js";
+import { buildFixtureRepository, cleanupFixture } from "./fixture.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "../src/workspace-graph.js";
 
 describe("computeRuntimeClosure", () => {
-  let repo: string;
+  let repositoryDir: string;
 
   before(async () => {
-    repo = await buildFixtureRepo();
+    repositoryDir = await buildFixtureRepository();
   });
 
   after(async () => {
-    await cleanupFixture(repo);
+    await cleanupFixture(repositoryDir);
   });
 
   it("includes workspace, file, and transitive registry deps but excludes unrelated ones", async () => {
-    const graph = await loadWorkspaceGraph(repo);
+    const graph = await loadWorkspaceGraph(repositoryDir);
     const target = resolveTargetWorkspace(graph, "foo");
-    const lockfile = await loadRootLockfile(repo);
+    const lockfile = await loadRepositoryLockfile(repositoryDir);
 
     const closure = await computeRuntimeClosure(graph, lockfile, target, {});
 
@@ -29,7 +29,7 @@ describe("computeRuntimeClosure", () => {
     assert.equal(closure.localDependencies.get("lib")?.sourceType, "workspace");
     assert.equal(closure.localDependencies.get("shared")?.sourceType, "file");
     assert.equal(
-      closure.localDependencies.get("lib")?.deployReference,
+      closure.localDependencies.get("lib")?.deploymentReference,
       "file:./local-packages/lib",
     );
 
@@ -45,7 +45,7 @@ describe("computeRuntimeClosure", () => {
   });
 
   it("fails clearly for a missing target workspace", async () => {
-    const graph = await loadWorkspaceGraph(repo);
+    const graph = await loadWorkspaceGraph(repositoryDir);
     assert.throws(() => resolveTargetWorkspace(graph, "does-not-exist"), /not found/);
   });
 });

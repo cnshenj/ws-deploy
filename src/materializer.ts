@@ -6,21 +6,21 @@ import type { PackageJson, DeployOptions, RuntimeClosure, DeployLocalDependency 
 import { copyPackageDir, isDirectory, removeDir, writeJson } from "./filesystem.js";
 
 export interface MaterializeResult {
-  /** The rewritten deployment root manifest. */
-  rootManifest: PackageJson;
+  /** The rewritten deployment package manifest. */
+  deploymentManifest: PackageJson;
   warnings: string[];
 }
 
 const WORKSPACE_OR_FILE = /^(workspace:|file:|link:)/;
 
 /** Normalize a package name into its filesystem sub-path (keeps scopes). */
-function deploySubPath(name: string): string {
+function deploymentSubPath(name: string): string {
   return name;
 }
 
 /** Compute a `file:` reference from `manifestRelDir` to a local package's deployment directory. */
-function computeLocalReference(manifestRelDir: string, depDeployRelativePath: string): string {
-  const rel = path.relative(manifestRelDir || ".", depDeployRelativePath).replace(/\\/g, "/");
+function computeLocalReference(manifestRelDir: string, dependencyDeploymentPath: string): string {
+  const rel = path.relative(manifestRelDir || ".", dependencyDeploymentPath).replace(/\\/g, "/");
   const normalized = rel.startsWith(".") ? rel : `./${rel}`;
   return `file:${normalized}`;
 }
@@ -30,19 +30,19 @@ function rewriteManifest(
   manifest: PackageJson,
   manifestRelDir: string,
   closure: RuntimeClosure,
-  options: { includeDev: boolean; isRoot: boolean },
+  options: { includeDev: boolean; isDeploymentManifest: boolean },
   warnings: string[],
 ): PackageJson {
   const rewritten: PackageJson = { ...manifest };
 
-  // Deployment root must not be a workspace root itself.
+  // The standalone deployment package must not retain workspace configuration.
   delete rewritten.workspaces;
 
   const sections: Array<"dependencies" | "optionalDependencies" | "devDependencies"> = [
     "dependencies",
     "optionalDependencies",
   ];
-  if (options.isRoot && options.includeDev) {
+  if (options.isDeploymentManifest && options.includeDev) {
     sections.push("devDependencies");
   }
   for (const section of sections) {
@@ -54,13 +54,13 @@ function rewriteManifest(
     for (const [name, spec] of Object.entries(original)) {
       const local = closure.localDependencies.get(name);
       if (local) {
-        next[name] = computeLocalReference(manifestRelDir, local.deployRelativePath);
+        next[name] = computeLocalReference(manifestRelDir, local.deploymentRelativePath);
       } else if (spec === undefined) {
         continue;
       } else if (WORKSPACE_OR_FILE.test(spec)) {
         warnings.push(
           `Dropped unresolved ${section} entry "${name}": "${spec}" ` +
-            `in ${manifestRelDir || "<root>"} (not part of the runtime closure).`,
+            `in ${manifestRelDir || "<deployment>"} (not part of the runtime closure).`,
         );
       } else {
         next[name] = spec; // registry dependency, left untouched
@@ -70,7 +70,7 @@ function rewriteManifest(
   }
 
   // devDependencies are prod-irrelevant in the deployment.
-  if (!(options.isRoot && options.includeDev)) {
+  if (!(options.isDeploymentManifest && options.includeDev)) {
     delete rewritten.devDependencies;
   }
 
@@ -81,59 +81,72 @@ function rewriteManifest(
  * Materialize the deployment tree for a closure.
  *
  * 1. (Re)create the deployment directory.
- * 2. Copy the target workspace files into the deployment root.
+ * 2. Copy the target workspace files into the deployment directory.
  * 3. Copy each local dependency into `local-packages/<name>`.
- * 4. Rewrite the root manifest and every local manifest so workspace/file
+ * 4. Rewrite the deployment manifest and every local manifest so workspace/file
  *    specifiers point at deployment-local `file:` references.
  */
 export async function materialize(
   closure: RuntimeClosure,
-  options: Pick<DeployOptions, "deployDir" | "includeDevDependencies" | "keepExistingDeployDir">,
+  repositoryManifest: PackageJson,
+  options: Pick<
+    DeployOptions,
+    "deploymentDir" | "includeDevDependencies" | "keepExistingDeploymentDir"
+  >,
 ): Promise<MaterializeResult> {
-  const deployDir = path.resolve(options.deployDir);
+  const deploymentDir = path.resolve(options.deploymentDir);
   const warnings: string[] = [];
 
-  if (!options.keepExistingDeployDir && (await isDirectory(deployDir))) {
-    await removeDir(deployDir);
+  if (!options.keepExistingDeploymentDir && (await isDirectory(deploymentDir))) {
+    await removeDir(deploymentDir);
   }
 
-  // Copy the target workspace into the deployment root.
-  await copyPackageDir(closure.target.path, deployDir, closure.target.manifest);
+  // Copy the target workspace into the deployment directory.
+  await copyPackageDir(closure.target.path, deploymentDir, closure.target.manifest);
 
   // Copy each local dependency.
   for (const local of closure.localDependencies.values()) {
-    const dest = path.join(deployDir, ...local.deployRelativePath.split("/"));
+    const dest = path.join(deploymentDir, ...local.deploymentRelativePath.split("/"));
     await copyLocalDependency(local, dest);
   }
 
-  // Rewrite the root manifest.
-  const rootManifest = rewriteManifest(
+  // Rewrite the deployment manifest.
+  const deploymentManifest = rewriteManifest(
     closure.target.manifest,
     "",
     closure,
-    { includeDev: options.includeDevDependencies ?? false, isRoot: true },
+    { includeDev: options.includeDevDependencies ?? false, isDeploymentManifest: true },
     warnings,
   );
-  await writeJson(path.join(deployDir, "package.json"), rootManifest);
+  const repositoryOverrides = repositoryManifest["overrides"];
+  if (repositoryOverrides === undefined) {
+    delete deploymentManifest["overrides"];
+  } else {
+    deploymentManifest["overrides"] = repositoryOverrides;
+  }
+  await writeJson(path.join(deploymentDir, "package.json"), deploymentManifest);
 
   // Rewrite each local dependency manifest.
   for (const local of closure.localDependencies.values()) {
-    const manifestRelDir = local.deployRelativePath;
+    const manifestRelDir = local.deploymentRelativePath;
     const rewritten = rewriteManifest(
       local.manifest,
       manifestRelDir,
       closure,
-      { includeDev: false, isRoot: false },
+      { includeDev: false, isDeploymentManifest: false },
       warnings,
     );
-    await writeJson(path.join(deployDir, ...manifestRelDir.split("/"), "package.json"), rewritten);
+    await writeJson(
+      path.join(deploymentDir, ...manifestRelDir.split("/"), "package.json"),
+      rewritten,
+    );
   }
 
-  return { rootManifest, warnings };
+  return { deploymentManifest, warnings };
 }
 
 async function copyLocalDependency(local: DeployLocalDependency, dest: string): Promise<void> {
   await copyPackageDir(local.sourcePath, dest, local.manifest);
 }
 
-export { deploySubPath };
+export { deploymentSubPath };

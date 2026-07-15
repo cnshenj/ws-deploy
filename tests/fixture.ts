@@ -12,26 +12,26 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 /**
  * Build a fixture monorepo:
  *
- *   root
+ *   repository
  *   ├─ packages/foo   -> workspace:lib, file:../../shared, registry:somelib, dev:typescript
  *   ├─ packages/bar   -> registry:lodash@4 (unrelated)
  *   ├─ packages/lib   -> registry:leftpad
  *   └─ shared         -> (no deps, referenced via file:)
  *
- * Root lockfile pins somelib@1.2.0 (needs lodash@3.10.1 nested) and leftpad@1.3.0.
- * Returns the absolute repo root path.
+ * The repository lockfile pins somelib@1.2.0 (needs lodash@3.10.1 nested) and leftpad@1.3.0.
+ * Returns the absolute repository directory.
  */
-export async function buildFixtureRepo(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-fixture-"));
+export async function buildFixtureRepository(): Promise<string> {
+  const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-fixture-"));
 
-  await writeJson(path.join(root, "package.json"), {
-    name: "monorepo-root",
+  await writeJson(path.join(repositoryDir, "package.json"), {
+    name: "fixture-repository",
     version: "0.0.0",
     private: true,
     workspaces: ["packages/*"],
   });
 
-  await writeJson(path.join(root, "packages/foo/package.json"), {
+  await writeJson(path.join(repositoryDir, "packages/foo/package.json"), {
     name: "foo",
     version: "1.0.0",
     dependencies: {
@@ -41,34 +41,34 @@ export async function buildFixtureRepo(): Promise<string> {
     },
     devDependencies: { typescript: "^5.0.0" },
   });
-  await fs.writeFile(path.join(root, "packages/foo/index.js"), "export const foo = 1;\n");
+  await fs.writeFile(path.join(repositoryDir, "packages/foo/index.js"), "export const foo = 1;\n");
 
-  await writeJson(path.join(root, "packages/bar/package.json"), {
+  await writeJson(path.join(repositoryDir, "packages/bar/package.json"), {
     name: "bar",
     version: "1.0.0",
     dependencies: { lodash: "^4.0.0" },
   });
 
-  await writeJson(path.join(root, "packages/lib/package.json"), {
+  await writeJson(path.join(repositoryDir, "packages/lib/package.json"), {
     name: "lib",
     version: "2.0.0",
     dependencies: { leftpad: "^1.0.0" },
   });
-  await fs.writeFile(path.join(root, "packages/lib/index.js"), "export const lib = 1;\n");
+  await fs.writeFile(path.join(repositoryDir, "packages/lib/index.js"), "export const lib = 1;\n");
 
-  await writeJson(path.join(root, "shared/package.json"), {
+  await writeJson(path.join(repositoryDir, "shared/package.json"), {
     name: "shared",
     version: "3.0.0",
   });
-  await fs.writeFile(path.join(root, "shared/index.js"), "export const shared = 1;\n");
+  await fs.writeFile(path.join(repositoryDir, "shared/index.js"), "export const shared = 1;\n");
 
-  await writeJson(path.join(root, "package-lock.json"), {
-    name: "monorepo-root",
+  await writeJson(path.join(repositoryDir, "package-lock.json"), {
+    name: "fixture-repository",
     version: "0.0.0",
     lockfileVersion: 3,
     requires: true,
     packages: {
-      "": { name: "monorepo-root", version: "0.0.0" },
+      "": { name: "fixture-repository", version: "0.0.0" },
       "packages/foo": { name: "foo", version: "1.0.0" },
       "packages/bar": { name: "bar", version: "1.0.0" },
       "packages/lib": { name: "lib", version: "2.0.0" },
@@ -99,10 +99,10 @@ export async function buildFixtureRepo(): Promise<string> {
     },
   });
 
-  return root;
+  return repositoryDir;
 }
 
-/** Remove a fixture repo. */
-export async function cleanupFixture(root: string): Promise<void> {
-  await fs.rm(root, { recursive: true, force: true });
+/** Remove a fixture repository. */
+export async function cleanupFixture(repositoryDir: string): Promise<void> {
+  await fs.rm(repositoryDir, { recursive: true, force: true });
 }

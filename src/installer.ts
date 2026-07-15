@@ -7,7 +7,7 @@ import type { InstallMode } from "./types.js";
 /** A pluggable package-manager backend. */
 export interface InstallerAdapter {
   readonly name: string;
-  install(deployDir: string, mode: InstallMode, npmrc?: string): Promise<void>;
+  install(deploymentDir: string, mode: InstallMode, npmrc?: string): Promise<void>;
 }
 
 /** npm CLI arguments per install mode. */
@@ -20,14 +20,14 @@ const NPM_ARGS: Record<Exclude<InstallMode, "none">, string[]> = {
 export class NpmInstaller implements InstallerAdapter {
   readonly name = "npm";
 
-  async install(deployDir: string, mode: InstallMode, npmrc?: string): Promise<void> {
+  async install(deploymentDir: string, mode: InstallMode, npmrc?: string): Promise<void> {
     if (mode === "none") {
       return;
     }
     // execa resolves `npm`/`npm.cmd` across platforms without a shell, and
     // throws a descriptive error on a non-zero exit code.
     const args = npmrc ? [...NPM_ARGS[mode], "--userconfig", npmrc] : NPM_ARGS[mode];
-    await execa("npm", args, { cwd: deployDir, stdio: "inherit" });
+    await execa("npm", args, { cwd: deploymentDir, stdio: "inherit" });
   }
 }
 

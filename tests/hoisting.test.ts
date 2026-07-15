@@ -14,26 +14,29 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.writeFile(file, `${JSON.stringify(value, undefined, 2)}\n`, "utf8");
 }
 
-/** Materialize a temp monorepo from a set of manifests + a root lockfile. */
-async function buildRepo(
+/** Materialize a temporary repository from manifests and a repository lockfile. */
+async function buildRepository(
   manifests: Record<string, unknown>,
   lockfile: NpmLockfile,
 ): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-"));
+  const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-"));
   for (const [dir, manifest] of Object.entries(manifests)) {
-    await writeJson(path.join(root, dir, "package.json"), manifest);
-    await fs.writeFile(path.join(root, dir, "index.js"), "export default 1;\n", "utf8");
+    await writeJson(path.join(repositoryDir, dir, "package.json"), manifest);
+    await fs.writeFile(path.join(repositoryDir, dir, "index.js"), "export default 1;\n", "utf8");
   }
-  await writeJson(path.join(root, "package-lock.json"), lockfile);
-  return root;
+  await writeJson(path.join(repositoryDir, "package-lock.json"), lockfile);
+  return repositoryDir;
 }
 
-async function deploy(root: string, target: string): Promise<NpmLockfile> {
-  const deployDir = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-")), "out");
+async function deploy(repositoryDir: string, target: string): Promise<NpmLockfile> {
+  const deploymentDir = path.join(
+    await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-")),
+    "out",
+  );
   const result = await runWsDeploy({
-    repoRoot: root,
+    repositoryDir,
     targetWorkspace: target,
-    deployDir: deployDir,
+    deploymentDir,
     installMode: "none",
   });
   return result.lockfile;
@@ -48,12 +51,12 @@ describe("projectLockfile hoisting", () => {
   });
 
   it("nests a conflicting version under the consumer that needs it", async () => {
-    // foo needs somelib@1 (nested under foo in the monorepo); lib needs
-    // somelib@2 (hoisted to root). Re-rooted on foo: somelib@1 rises to the
-    // root, somelib@2 must nest under lib.
-    const root = await buildRepo(
+    // foo needs somelib@1 (nested under foo in the repository); lib needs
+    // somelib@2 (top-level in the repository). In the deployment, somelib@1
+    // becomes top-level and somelib@2 must nest under lib.
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -62,11 +65,11 @@ describe("projectLockfile hoisting", () => {
         "packages/lib": { name: "lib", version: "1.0.0", dependencies: { somelib: "^2.0.0" } },
       },
       {
-        name: "root",
+        name: "repository",
         lockfileVersion: 3,
         requires: true,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "packages/lib": { name: "lib", version: "1.0.0" },
           "node_modules/foo": { resolved: "packages/foo", link: true },
@@ -84,23 +87,23 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
     assert.equal(lockfile.packages["node_modules/somelib"]?.version, "1.0.0");
     assert.equal(lockfile.packages["local-packages/lib/node_modules/somelib"]?.version, "2.0.0");
     assert.equal(lockfile.packages["node_modules/lib"]?.link, true);
   });
 
-  it("hoists the most-used version to the root and nests the minority", async () => {
+  it("hoists the most-used version to the deployment and nests the minority", async () => {
     // p1/p2/p3 need lodash@4, q needs lodash@3. In the monorepo, lodash@3 is at
-    // the root and lodash@4 is nested under each p. Re-rooted on foo, the
-    // most-used version (lodash@4, 3 consumers) hoists to the root; lodash@3
-    // (1 consumer) nests under q — inverting the monorepo layout.
-    const root = await buildRepo(
+    // the top level and lodash@4 is nested under each p. In the deployment, the
+    // most-used version (lodash@4, 3 consumers) is top-level; lodash@3
+    // (1 consumer) nests under q, inverting the repository layout.
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -117,11 +120,11 @@ describe("projectLockfile hoisting", () => {
         "packages/q": { name: "q", version: "1.0.0", dependencies: { lodash: "^3.0.0" } },
       },
       {
-        name: "root",
+        name: "repository",
         lockfileVersion: 3,
         requires: true,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "packages/p1": { name: "p1", version: "1.0.0" },
           "packages/p2": { name: "p2", version: "1.0.0" },
@@ -155,24 +158,24 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
-    // Majority version at the root.
+    // Majority version at the top level of the deployment.
     assert.equal(lockfile.packages["node_modules/lodash"]?.version, "4.0.0");
     // Minority nested under its lone consumer.
     assert.equal(lockfile.packages["local-packages/q/node_modules/lodash"]?.version, "3.0.0");
-    // The three majority consumers share the root copy (no per-consumer nesting).
+    // The three majority consumers share the deployment copy (no per-consumer nesting).
     assert.equal(lockfile.packages["local-packages/p1/node_modules/lodash"], undefined);
     assert.equal(lockfile.packages["local-packages/p2/node_modules/lodash"], undefined);
     assert.equal(lockfile.packages["local-packages/p3/node_modules/lodash"], undefined);
   });
 
-  it("keeps the target's direct version at the root when another version is more used", async () => {
-    const root = await buildRepo(
+  it("keeps the target's direct version top-level when another version is more used", async () => {
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -188,11 +191,11 @@ describe("projectLockfile hoisting", () => {
         "packages/p3": { name: "p3", version: "1.0.0", dependencies: { somelib: "^2.0.0" } },
       },
       {
-        name: "root",
+        name: "repository",
         lockfileVersion: 3,
         requires: true,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "packages/p1": { name: "p1", version: "1.0.0" },
           "packages/p2": { name: "p2", version: "1.0.0" },
@@ -224,9 +227,9 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
     assert.equal(lockfile.packages["node_modules/somelib"]?.version, "1.0.0");
     assert.equal(lockfile.packages["local-packages/p1/node_modules/somelib"]?.version, "2.0.0");
@@ -235,9 +238,9 @@ describe("projectLockfile hoisting", () => {
   });
 
   it("breaks equal usage ties by ascending version", async () => {
-    const root = await buildRepo(
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -249,7 +252,7 @@ describe("projectLockfile hoisting", () => {
       {
         lockfileVersion: 3,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "packages/p1": { name: "p1", version: "1.0.0" },
           "packages/p2": { name: "p2", version: "1.0.0" },
@@ -269,18 +272,18 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
     assert.equal(lockfile.packages["node_modules/somelib"]?.version, "1.0.0");
     assert.equal(lockfile.packages["local-packages/p1/node_modules/somelib"]?.version, "2.0.0");
   });
 
   it("places a deep transitive conflict under the direct local consumer", async () => {
-    const root = await buildRepo(
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -292,7 +295,7 @@ describe("projectLockfile hoisting", () => {
       {
         lockfileVersion: 3,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "packages/a": { name: "a", version: "1.0.0" },
           "packages/b": { name: "b", version: "1.0.0" },
@@ -318,9 +321,9 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
     assert.equal(lockfile.packages["node_modules/x"]?.version, "1.0.0");
     assert.equal(lockfile.packages["node_modules/y"]?.version, "2.0.0");
@@ -329,9 +332,9 @@ describe("projectLockfile hoisting", () => {
   });
 
   it("terminates when registry dependencies contain a cycle", async () => {
-    const root = await buildRepo(
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -341,7 +344,7 @@ describe("projectLockfile hoisting", () => {
       {
         lockfileVersion: 3,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "node_modules/foo": { resolved: "packages/foo", link: true },
           "node_modules/a": {
@@ -359,9 +362,9 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
     assert.equal(lockfile.packages["node_modules/a"]?.version, "1.0.0");
     assert.equal(lockfile.packages["node_modules/b"]?.version, "1.0.0");
@@ -370,9 +373,9 @@ describe("projectLockfile hoisting", () => {
   });
 
   it("deduplicates the same exact package version across lockfile contexts deterministically", async () => {
-    const root = await buildRepo(
+    const repositoryDir = await buildRepository(
       {
-        ".": { name: "root", private: true, workspaces: ["packages/*"] },
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
         "packages/foo": {
           name: "foo",
           version: "1.0.0",
@@ -384,7 +387,7 @@ describe("projectLockfile hoisting", () => {
       {
         lockfileVersion: 3,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/foo": { name: "foo", version: "1.0.0" },
           "packages/p1": { name: "p1", version: "1.0.0" },
           "packages/p2": { name: "p2", version: "1.0.0" },
@@ -416,9 +419,9 @@ describe("projectLockfile hoisting", () => {
         },
       },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const lockfile = await deploy(root, "foo");
+    const lockfile = await deploy(repositoryDir, "foo");
 
     assert.equal(lockfile.packages["node_modules/x"]?.resolved, "https://r/x-context-one.tgz");
     assert.equal(lockfile.packages["node_modules/x"]?.integrity, "sha512-context-one");

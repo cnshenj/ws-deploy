@@ -6,39 +6,49 @@ import * as path from "node:path";
 import { after, describe, it } from "node:test";
 
 import { runWsDeploy } from "../src/deploy.js";
-import { loadRootLockfile } from "../src/lockfile.js";
+import { loadRepositoryLockfile } from "../src/lockfile.js";
+import type { PackageJson } from "../src/types.js";
 
 async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, `${JSON.stringify(value, undefined, 2)}\n`, "utf8");
 }
 
-async function buildRepo(lockfile: unknown, manifest?: object): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-lockfile-"));
-  await writeJson(path.join(root, "package.json"), {
-    name: "root",
+async function buildRepository(
+  lockfile: unknown,
+  manifest?: object,
+  repositoryFields: object = {},
+): Promise<string> {
+  const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-lockfile-"));
+  await writeJson(path.join(repositoryDir, "package.json"), {
+    name: "repository",
     private: true,
     workspaces: ["packages/*"],
+    ...repositoryFields,
   });
   await writeJson(
-    path.join(root, "packages/app/package.json"),
+    path.join(repositoryDir, "packages/app/package.json"),
     manifest ?? { name: "app", version: "1.0.0" },
   );
-  await fs.writeFile(path.join(root, "packages/app/cli.js"), "console.log('app');\n", "utf8");
-  await writeJson(path.join(root, "package-lock.json"), lockfile);
-  return root;
+  await fs.writeFile(
+    path.join(repositoryDir, "packages/app/cli.js"),
+    "console.log('app');\n",
+    "utf8",
+  );
+  await writeJson(path.join(repositoryDir, "package-lock.json"), lockfile);
+  return repositoryDir;
 }
 
 describe("lockfile integration", () => {
   const cleanups: string[] = [];
 
   after(async () => {
-    for (const root of cleanups) {
-      await fs.rm(root, { recursive: true, force: true });
+    for (const repositoryDir of cleanups) {
+      await fs.rm(repositoryDir, { recursive: true, force: true });
     }
   });
 
-  it("preserves a v2 lockfile version and projected root manifest fields", async () => {
+  it("preserves a v2 lockfile version and projected deployment manifest fields", async () => {
     const manifest = {
       name: "app",
       version: "1.0.0",
@@ -48,13 +58,14 @@ describe("lockfile integration", () => {
       optionalDependencies: { optional: "^2.0.0" },
       peerDependencies: { peer: "^3.0.0" },
     };
-    const root = await buildRepo(
+    const repositoryOverrides = { dep: "1.2.0" };
+    const repositoryDir = await buildRepository(
       {
-        name: "root",
+        name: "repository",
         lockfileVersion: 2,
         requires: true,
         packages: {
-          "": { name: "root" },
+          "": { name: "repository" },
           "packages/app": { name: "app", version: "1.0.0" },
           "node_modules/app": { resolved: "packages/app", link: true },
           "node_modules/dep": {
@@ -77,14 +88,15 @@ describe("lockfile integration", () => {
         },
       },
       manifest,
+      { overrides: repositoryOverrides },
     );
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
-    const deployDir = path.join(root, "output");
+    const deploymentDir = path.join(repositoryDir, "output");
     const result = await runWsDeploy({
-      repoRoot: root,
+      repositoryDir,
       targetWorkspace: "app",
-      deployDir,
+      deploymentDir,
       installMode: "none",
       includeDevDependencies: true,
       includeOptionalDependencies: true,
@@ -96,18 +108,22 @@ describe("lockfile integration", () => {
     assert.equal(result.lockfile.packages["node_modules/dep"]?.integrity, "sha512-dep");
     assert.equal(result.lockfile.packages["node_modules/optional"]?.optional, true);
     assert.equal(result.lockfile.packages["node_modules/devpkg"]?.dev, true);
+    const deploymentManifest = await fs
+      .readFile(path.join(deploymentDir, "package.json"), "utf8")
+      .then((value) => JSON.parse(value) as PackageJson);
+    assert.deepEqual(deploymentManifest["overrides"], repositoryOverrides);
   });
 
   it("rejects a legacy lockfile without a packages map", async () => {
-    const root = await buildRepo({
-      name: "root",
+    const repositoryDir = await buildRepository({
+      name: "repository",
       lockfileVersion: 1,
       dependencies: { dep: { version: "1.2.0" } },
     });
-    cleanups.push(root);
+    cleanups.push(repositoryDir);
 
     await assert.rejects(
-      loadRootLockfile(root),
+      loadRepositoryLockfile(repositoryDir),
       /has no "packages" map \(lockfileVersion >= 2 is required\)/,
     );
   });

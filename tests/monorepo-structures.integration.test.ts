@@ -13,8 +13,12 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.writeFile(file, `${JSON.stringify(value, undefined, 2)}\n`, "utf8");
 }
 
-async function writePackage(root: string, relativeDir: string, manifest: object): Promise<void> {
-  const packageDir = path.join(root, relativeDir);
+async function writePackage(
+  repositoryDir: string,
+  relativeDir: string,
+  manifest: object,
+): Promise<void> {
+  const packageDir = path.join(repositoryDir, relativeDir);
   await writeJson(path.join(packageDir, "package.json"), manifest);
   await fs.writeFile(path.join(packageDir, "index.js"), "export const value = 1;\n", "utf8");
 }
@@ -24,21 +28,21 @@ async function readJson<T>(file: string): Promise<T> {
 }
 
 describe("monorepo structure integration", () => {
-  let repo: string;
-  let deployDir: string;
+  let repositoryDir: string;
+  let deploymentDir: string;
 
   before(async () => {
-    repo = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-structures-"));
-    deployDir = path.join(repo, "output");
+    repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-structures-"));
+    deploymentDir = path.join(repositoryDir, "output");
 
-    await writeJson(path.join(repo, "package.json"), {
-      name: "root",
+    await writeJson(path.join(repositoryDir, "package.json"), {
+      name: "fixture-repository",
       private: true,
       workspaces: {
         packages: ["services/*", "groups/*/packages/*", "libs/*"],
       },
     });
-    await writePackage(repo, "services/api", {
+    await writePackage(repositoryDir, "services/api", {
       name: "@acme/api",
       version: "1.0.0",
       dependencies: {
@@ -50,37 +54,37 @@ describe("monorepo structure integration", () => {
         "file-dev": "file:../../files/file-dev",
       },
     });
-    await writePackage(repo, "groups/platform/packages/lib", {
+    await writePackage(repositoryDir, "groups/platform/packages/lib", {
       name: "@acme/lib",
       version: "2.0.0",
       dependencies: { "@acme/shared": "workspace:^" },
     });
-    await writePackage(repo, "libs/shared", {
+    await writePackage(repositoryDir, "libs/shared", {
       name: "@acme/shared",
       version: "3.0.0",
     });
-    await writePackage(repo, "libs/dev-tool", {
+    await writePackage(repositoryDir, "libs/dev-tool", {
       name: "@acme/dev-tool",
       version: "6.0.0",
     });
-    await writePackage(repo, "files/file-a", {
+    await writePackage(repositoryDir, "files/file-a", {
       name: "file-a",
       version: "4.0.0",
       dependencies: { "file-b": "file:../file-b" },
     });
-    await writePackage(repo, "files/file-b", {
+    await writePackage(repositoryDir, "files/file-b", {
       name: "file-b",
       version: "5.0.0",
     });
-    await writePackage(repo, "files/file-dev", {
+    await writePackage(repositoryDir, "files/file-dev", {
       name: "file-dev",
       version: "7.0.0",
     });
-    await writeJson(path.join(repo, "package-lock.json"), {
-      name: "root",
+    await writeJson(path.join(repositoryDir, "package-lock.json"), {
+      name: "fixture-repository",
       lockfileVersion: 3,
       packages: {
-        "": { name: "root" },
+        "": { name: "fixture-repository" },
         "services/api": { name: "@acme/api", version: "1.0.0" },
         "groups/platform/packages/lib": { name: "@acme/lib", version: "2.0.0" },
         "libs/shared": { name: "@acme/shared", version: "3.0.0" },
@@ -94,14 +98,14 @@ describe("monorepo structure integration", () => {
   });
 
   after(async () => {
-    await fs.rm(repo, { recursive: true, force: true });
+    await fs.rm(repositoryDir, { recursive: true, force: true });
   });
 
   it("materializes nested scoped workspaces and recursive file dependencies", async () => {
     const result = await runWsDeploy({
-      repoRoot: repo,
+      repositoryDir,
       targetWorkspace: "@acme/api",
-      deployDir,
+      deploymentDir,
       installMode: "none",
     });
 
@@ -116,24 +120,26 @@ describe("monorepo structure integration", () => {
     assert.equal(result.closure.localDependencies.get("file-a")?.sourceType, "file");
     assert.equal(result.closure.localDependencies.get("file-b")?.sourceType, "file");
 
-    const rootManifest = await readJson<PackageJson>(path.join(deployDir, "package.json"));
-    assert.equal(rootManifest.name, "@acme/api");
-    assert.equal(rootManifest.dependencies?.["@acme/lib"], "file:./local-packages/@acme/lib");
-    assert.equal(rootManifest.dependencies?.["file-a"], "file:./local-packages/file-a");
-    assert.equal(rootManifest.devDependencies, undefined);
+    const deploymentManifest = await readJson<PackageJson>(
+      path.join(deploymentDir, "package.json"),
+    );
+    assert.equal(deploymentManifest.name, "@acme/api");
+    assert.equal(deploymentManifest.dependencies?.["@acme/lib"], "file:./local-packages/@acme/lib");
+    assert.equal(deploymentManifest.dependencies?.["file-a"], "file:./local-packages/file-a");
+    assert.equal(deploymentManifest.devDependencies, undefined);
 
     const libManifest = await readJson<PackageJson>(
-      path.join(deployDir, "local-packages/@acme/lib/package.json"),
+      path.join(deploymentDir, "local-packages/@acme/lib/package.json"),
     );
     assert.equal(libManifest.dependencies?.["@acme/shared"], "file:../shared");
 
     const fileManifest = await readJson<PackageJson>(
-      path.join(deployDir, "local-packages/file-a/package.json"),
+      path.join(deploymentDir, "local-packages/file-a/package.json"),
     );
     assert.equal(fileManifest.dependencies?.["file-b"], "file:../file-b");
 
-    await fs.access(path.join(deployDir, "local-packages/@acme/shared/index.js"));
-    await fs.access(path.join(deployDir, "local-packages/file-b/index.js"));
+    await fs.access(path.join(deploymentDir, "local-packages/@acme/shared/index.js"));
+    await fs.access(path.join(deploymentDir, "local-packages/file-b/index.js"));
     assert.deepEqual(result.lockfile.packages["node_modules/@acme/lib"], {
       resolved: "local-packages/@acme/lib",
       link: true,
@@ -144,9 +150,9 @@ describe("monorepo structure integration", () => {
 
   it("materializes and rewrites enabled local dev dependencies", async () => {
     const result = await runWsDeploy({
-      repoRoot: repo,
+      repositoryDir,
       targetWorkspace: "@acme/api",
-      deployDir,
+      deploymentDir,
       installMode: "none",
       includeDevDependencies: true,
     });
@@ -160,13 +166,21 @@ describe("monorepo structure integration", () => {
       "file-dev",
     ]);
 
-    const rootManifest = await readJson<PackageJson>(path.join(deployDir, "package.json"));
+    const deploymentManifest = await readJson<PackageJson>(
+      path.join(deploymentDir, "package.json"),
+    );
     assert.equal(
-      rootManifest.devDependencies?.["@acme/dev-tool"],
+      deploymentManifest.devDependencies?.["@acme/dev-tool"],
       "file:./local-packages/@acme/dev-tool",
     );
-    assert.equal(rootManifest.devDependencies?.["file-dev"], "file:./local-packages/file-dev");
-    assert.deepEqual(result.lockfile.packages[""].devDependencies, rootManifest.devDependencies);
+    assert.equal(
+      deploymentManifest.devDependencies?.["file-dev"],
+      "file:./local-packages/file-dev",
+    );
+    assert.deepEqual(
+      result.lockfile.packages[""]?.devDependencies,
+      deploymentManifest.devDependencies,
+    );
     assert.deepEqual(result.lockfile.packages["node_modules/@acme/dev-tool"], {
       resolved: "local-packages/@acme/dev-tool",
       link: true,
@@ -175,7 +189,7 @@ describe("monorepo structure integration", () => {
       resolved: "local-packages/file-dev",
       link: true,
     });
-    await fs.access(path.join(deployDir, "local-packages/@acme/dev-tool/index.js"));
-    await fs.access(path.join(deployDir, "local-packages/file-dev/index.js"));
+    await fs.access(path.join(deploymentDir, "local-packages/@acme/dev-tool/index.js"));
+    await fs.access(path.join(deploymentDir, "local-packages/file-dev/index.js"));
   });
 });

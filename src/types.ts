@@ -32,7 +32,7 @@ export interface DependencyEdge {
   kind: DependencyKind;
   /** Which manifest section the edge came from. */
   group: DependencyGroup;
-  /** Exact version resolved from the root lockfile, when applicable. */
+  /** Exact version resolved from the repository lockfile, when applicable. */
   resolvedVersion?: string;
   /** Absolute path a workspace/file dependency resolves to. */
   resolvedPath?: string;
@@ -42,7 +42,7 @@ export interface DependencyEdge {
 export interface WorkspaceNode {
   name: string;
   version: string;
-  /** Absolute path to the package root directory. */
+  /** Absolute path to the package directory. */
   path: string;
   /** Absolute path to the package's `package.json`. */
   manifestPath: string;
@@ -55,8 +55,8 @@ export interface WorkspaceNode {
 
 /** The discovered monorepo graph. */
 export interface WorkspaceGraph {
-  repoRoot: string;
-  rootManifest: PackageJson;
+  repositoryDir: string;
+  repositoryManifest: PackageJson;
   /** Workspace nodes keyed by package name. */
   nodes: Map<string, WorkspaceNode>;
 }
@@ -73,16 +73,16 @@ export interface DeployLocalDependency {
   version: string;
   manifest: PackageJson;
   /** Relative deployment path, e.g. `local-packages/lib`. */
-  deployRelativePath: string;
+  deploymentRelativePath: string;
   /** Reference written into dependent manifests, e.g. `file:./local-packages/lib`. */
-  deployReference: string;
+  deploymentReference: string;
 }
 
 /** A registry package that belongs to the runtime closure. */
 export interface ClosureRegistryPackage {
   name: string;
   version: string;
-  /** Lockfile key in the root lockfile, e.g. `node_modules/lodash`. */
+  /** Lockfile key in the repository lockfile, e.g. `node_modules/lodash`. */
   lockfileKey: string;
   /** Registry dependency edges as `name@version` instance keys. */
   dependencies: string[];
@@ -90,9 +90,9 @@ export interface ClosureRegistryPackage {
   peerDependencies: string[];
 }
 
-/** A direct registry demand from a deployment consumer (the root or a local dep). */
+/** A direct registry demand from the deployment package or a local dependency. */
 export interface RegistryDemand {
-  /** Deployment location of the consumer: `""` for the root, else a local dep path. */
+  /** Deployment location: `""` for the deployment package, else a local dependency path. */
   location: string;
   /** The demanded registry package as a `name@version` instance key. */
   instanceKey: string;
@@ -100,13 +100,13 @@ export interface RegistryDemand {
 
 /** The full runtime closure of the target workspace. */
 export interface RuntimeClosure {
-  /** The target workspace node (deployment root). */
+  /** The target workspace node copied to the deployment directory. */
   target: WorkspaceNode;
   /** Local (workspace/file) dependencies to copy, keyed by name. */
   localDependencies: Map<string, DeployLocalDependency>;
   /** Registry packages keyed by `name@version` (the registry dependency graph). */
   registryPackages: Map<string, ClosureRegistryPackage>;
-  /** Direct registry demands from the root package and each local dependency. */
+  /** Direct registry demands from the deployment package and each local dependency. */
   topDemands: RegistryDemand[];
   /** Warnings collected during traversal (e.g. unresolved optional deps). */
   warnings: string[];
@@ -150,21 +150,21 @@ export const DEFAULT_INSTALL_MODE: InstallMode = "npm-ci";
 
 /** Options controlling a ws-deploy run. */
 export interface DeployOptions {
-  repoRoot: string;
+  repositoryDir: string;
   targetWorkspace: string;
-  deployDir: string;
+  deploymentDir: string;
   installMode?: InstallMode;
   /** npm configuration file used by the installation step. */
   npmrc?: string;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
   /** When true, do not delete an existing deployment directory. */
-  keepExistingDeployDir?: boolean;
+  keepExistingDeploymentDir?: boolean;
 }
 
 /** Result of a completed ws-deploy run. */
 export interface DeployResult {
-  deployDir: string;
+  deploymentDir: string;
   closure: RuntimeClosure;
   lockfile: NpmLockfile;
   warnings: string[];

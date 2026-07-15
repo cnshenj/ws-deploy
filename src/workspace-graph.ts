@@ -11,16 +11,16 @@ import { readManifest } from "./filesystem.js";
 /**
  * Load the workspace graph for a monorepo.
  *
- * Reads the root manifest, resolves the `workspaces` patterns via
+ * Reads the repository manifest, resolves the `workspaces` patterns via
  * `@npmcli/map-workspaces` (npm's own resolver), parses each package manifest,
  * and classifies dependency edges against the discovered workspace name set.
  */
-export async function loadWorkspaceGraph(repoRoot: string): Promise<WorkspaceGraph> {
-  const absRoot = path.resolve(repoRoot);
-  const rootManifestPath = path.join(absRoot, "package.json");
-  const rootManifest = await readManifest(rootManifestPath);
+export async function loadWorkspaceGraph(repositoryDir: string): Promise<WorkspaceGraph> {
+  const resolvedRepositoryDir = path.resolve(repositoryDir);
+  const repositoryManifestPath = path.join(resolvedRepositoryDir, "package.json");
+  const repositoryManifest = await readManifest(repositoryManifestPath);
 
-  const workspaceMap = await mapWorkspaces({ cwd: absRoot, pkg: rootManifest });
+  const workspaceMap = await mapWorkspaces({ cwd: resolvedRepositoryDir, pkg: repositoryManifest });
   const workspaceNames = new Set(workspaceMap.keys());
 
   const nodes = new Map<string, WorkspaceNode>();
@@ -41,7 +41,7 @@ export async function loadWorkspaceGraph(repoRoot: string): Promise<WorkspaceGra
     });
   }
 
-  return { repoRoot: absRoot, rootManifest, nodes };
+  return { repositoryDir: resolvedRepositoryDir, repositoryManifest, nodes };
 }
 
 /** Resolve the target workspace node, failing early when missing (SPEC Step 2). */
@@ -53,7 +53,7 @@ export function resolveTargetWorkspace(
   if (!node) {
     const available = [...graph.nodes.keys()].toSorted().join(", ") || "(none)";
     throw new Error(
-      `Target workspace "${targetWorkspace}" not found in ${graph.repoRoot}. ` +
+      `Target workspace "${targetWorkspace}" not found in ${graph.repositoryDir}. ` +
         `Available workspaces: ${available}.`,
     );
   }
