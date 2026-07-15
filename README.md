@@ -53,6 +53,33 @@ npx ws-deploy \
 The deployment folder can then be passed to a container build, hosting platform, or separate
 archiving tool.
 
+## Why `ws-deploy`
+
+`ws-deploy` works much like [`pnpm deploy`](https://pnpm.io/cli/deploy), but for npm: both turn one
+workspace package into a standalone deployment root, include its local workspace dependencies,
+and can produce an isolated `node_modules`. By contrast,
+[`turbo prune`](https://turborepo.dev/docs/reference/prune) creates a partial monorepo intended for
+subsequent install and build steps.
+
+|                               | `ws-deploy`                                                    | `pnpm deploy`                                         | `turbo prune`                                               |
+| ----------------------------- | -------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| Primary output                | Standalone npm package root                                    | Standalone pnpm package root                          | Partial monorepo for building the target                    |
+| Lockfile                      | New, projected `package-lock.json`                             | Dedicated lockfile projected from the shared lockfile | Pruned copy of the repository lockfile                      |
+| Dependency installation       | Configurable: `npm ci`, `npm install`, or none                 | Installed into an isolated `node_modules`             | Not installed                                               |
+| Repository layout retained    | No (intentional)                                               | No (intentional)                                      | Yes                                                         |
+| Local packages                | Packed locally and rewritten to deployment-local `file:` paths | Installed as internal dependencies                    | Retained as packages in the partial workspace               |
+| Package-manager prerequisites | npm workspaces and a root npm lockfile                         | A pnpm workspace; current defaults require injection  | A Turborepo monorepo                                        |
+| Best fit                      | Deploying one npm workspace directly                           | Deploying one package from a pnpm workspace           | Creating a smaller build context before install/build steps |
+
+### Benefits
+
+- **`pnpm deploy`-style output for npm.** Get a standalone package without migrating to pnpm or
+  adding Turborepo.
+- **Reproducible npm installs.** A projected `package-lock.json` preserves exact versions and
+  supports `npm ci`, including recursively packed workspace, `file:`, and `link:` dependencies.
+- **Flexible materialization.** Choose `npm ci`, `npm install`, or `--install none`, and use the same
+  workflow through the typed programmatic API.
+
 ## CLI reference
 
 ```text
@@ -65,7 +92,7 @@ ws-deploy --target <workspace-name> [options]
 | `-r, --repo <dir>`       | Monorepo root.                                                       | Current directory   |
 | `-o, --deploy-dir <dir>` | Deployment output directory.                                         | `./deploy/<target>` |
 | `-m, --install <mode>`   | Installation strategy: `npm-ci`, `npm-install`, or `none`.           | `npm-ci`            |
-| `--npmrc <path>`         | npm configuration file used by the installation step.               | User npm config     |
+| `--npmrc <path>`         | npm configuration file used by the installation step.                | User npm config     |
 | `--include-dev`          | Include the target workspace's `devDependencies`.                    | `false`             |
 | `--include-optional`     | Include optional dependencies throughout the closure.                | `false`             |
 | `--keep-deploy-dir`      | Keep the existing deployment directory instead of deleting it first. | `false`             |
