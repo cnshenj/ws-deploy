@@ -21,7 +21,7 @@ function deploymentSubPath(name: string): string {
 /** Compute a portable `file:` reference between two absolute package directories. */
 function computeLocalReference(manifestDir: string, dependencyDir: string): string {
   const rel = path.relative(manifestDir, dependencyDir).replace(/\\/g, "/");
-  const normalized = rel.startsWith(".") ? rel : `./${rel}`;
+  const normalized = path.isAbsolute(rel) || rel.startsWith(".") ? rel : `./${rel}`;
   return `file:${normalized}`;
 }
 

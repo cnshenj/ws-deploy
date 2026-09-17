@@ -5,8 +5,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 
+import npmPackageArg from "npm-package-arg";
+
 import { runWsDeploy } from "../src/deploy.js";
-import type { PackageJson } from "../src/types.js";
+import { projectLockfile } from "../src/lockfile-projector.js";
+import { materialize } from "../src/materializer.js";
+import type { NpmLockfile, PackageJson } from "../src/types.js";
 import { buildFixtureRepository, cleanupFixture } from "./fixture.js";
 
 async function readJson<T>(file: string): Promise<T> {
@@ -79,6 +83,47 @@ describe("runWsDeploy (installMode none)", () => {
     // The unrelated lodash@4 (bar's) is excluded.
     assert.notEqual(lockfile.packages["node_modules/lodash"]?.version, "4.17.21");
   });
+
+  it(
+    "preserves absolute local references across Windows drives",
+    { skip: process.platform !== "win32" },
+    async () => {
+      const result = await runWsDeploy({
+        repositoryDir,
+        targetWorkspace: "foo",
+        deploymentDir,
+        installMode: "none",
+      });
+      const deploymentDrive = path.parse(deploymentDir).root.toUpperCase().charCodeAt(0);
+      const sourceDrive = String.fromCharCode(deploymentDrive === 90 ? 65 : deploymentDrive + 1);
+      for (const local of result.closure.localDependencies.values()) {
+        const sourceRoot = path.parse(local.sourcePath).root;
+        local.sourcePath = path.join(
+          `${sourceDrive}:\\`,
+          path.relative(sourceRoot, local.sourcePath),
+        );
+      }
+
+      const { deploymentManifest } = await materialize(result.closure, {}, { deploymentDir });
+      const repositoryLockfile = await readJson<NpmLockfile>(
+        path.join(repositoryDir, "package-lock.json"),
+      );
+      const lockfile = projectLockfile(repositoryLockfile, result.closure, deploymentManifest, {
+        deploymentDir,
+      });
+
+      for (const local of result.closure.localDependencies.values()) {
+        const expectedReference = `file:${local.sourcePath.replace(/\\/g, "/")}`;
+        const manifestReference = deploymentManifest.dependencies?.[local.name];
+        assert.equal(manifestReference, expectedReference);
+        assert.equal(lockfile.packages[`node_modules/${local.name}`]?.resolved, expectedReference);
+        assert.equal(
+          npmPackageArg.resolve(local.name, expectedReference, deploymentDir).fetchSpec,
+          local.sourcePath,
+        );
+      }
+    },
+  );
 
   it("copies and rewrites local packages when requested", async () => {
     const result = await runWsDeploy({

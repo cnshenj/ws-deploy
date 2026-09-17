@@ -258,7 +258,7 @@ export function projectLockfile(
       };
     } else {
       let relativeSource = path.relative(deploymentDir, local.sourcePath).replace(/\\/g, "/");
-      if (!relativeSource.startsWith(".")) {
+      if (!path.isAbsolute(relativeSource) && !relativeSource.startsWith(".")) {
         relativeSource = `./${relativeSource}`;
       }
       packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
