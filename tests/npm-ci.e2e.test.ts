@@ -80,7 +80,12 @@ async function packPackage(
   const result = await execa("npm", ["pack", "--json", "--pack-destination", outputDir], {
     cwd: sourceDir,
   });
-  const [{ filename }] = JSON.parse(result.stdout) as [{ filename: string }];
+  const packages = JSON.parse(result.stdout) as
+    | { filename: string }[]
+    | Record<string, { filename: string }>;
+  const [packedPackage] = Object.values(packages);
+  assert.ok(packedPackage?.filename, "npm pack must return a tarball filename");
+  const { filename } = packedPackage;
   tarballs.set(`/${filename}`, path.join(outputDir, filename));
   return filename;
 }
@@ -173,7 +178,7 @@ describe("ws-deploy CLI E2E", () => {
       await execa(
         "npm",
         ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: repositoryDir },
+        { cwd: repositoryDir, env: { npm_config_allow_remote: "all" } },
       );
       const sourceLockfile = await readJson<NpmLockfile>(
         path.join(repositoryDir, "package-lock.json"),
@@ -198,6 +203,7 @@ describe("ws-deploy CLI E2E", () => {
         ],
         {
           cwd: PROJECT_DIR,
+          env: { npm_config_allow_remote: "all" },
         },
       );
       const projectedLockfile = await readJson<NpmLockfile>(
@@ -290,7 +296,7 @@ describe("ws-deploy CLI E2E", () => {
       await execa(
         "npm",
         ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: repositoryDir },
+        { cwd: repositoryDir, env: { npm_config_allow_remote: "all" } },
       );
       const sourceLockfile = await readJson<NpmLockfile>(
         path.join(repositoryDir, "package-lock.json"),
@@ -312,7 +318,7 @@ describe("ws-deploy CLI E2E", () => {
           "--install",
           "npm-ci",
         ],
-        { cwd: PROJECT_DIR },
+        { cwd: PROJECT_DIR, env: { npm_config_allow_remote: "all" } },
       );
       const projectedLockfile = await readJson<NpmLockfile>(
         path.join(deploymentDir, "package-lock.json"),
