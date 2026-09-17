@@ -16,6 +16,7 @@ interface CliOptions {
   npmrc?: string;
   includeDev: boolean;
   includeOptional: boolean;
+  copyLocalPackages: boolean;
   keepDeploymentDir: boolean;
 }
 
@@ -40,6 +41,7 @@ async function run(cli: CliOptions): Promise<void> {
     npmrc: cli.npmrc === undefined ? undefined : path.resolve(cli.npmrc),
     includeDevDependencies: cli.includeDev,
     includeOptionalDependencies: cli.includeOptional,
+    copyLocalPackages: cli.copyLocalPackages,
     keepExistingDeploymentDir: cli.keepDeploymentDir,
   };
 
@@ -71,6 +73,7 @@ program
   .option("--npmrc <path>", "Path to the .npmrc used for installation")
   .option("--include-dev", "Include the target's devDependencies", false)
   .option("--include-optional", "Include optionalDependencies in the closure", false)
+  .option("--copy-local-packages", "Copy local packages into the deployment directory", false)
   .option("--keep-deployment-dir", "Do not delete an existing deployment directory first", false)
   .allowExcessArguments(false)
   .action(async (cli: CliOptions) => {

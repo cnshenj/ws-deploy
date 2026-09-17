@@ -20,7 +20,7 @@ export interface ValidationResult {
 export async function validateDeployment(
   deploymentDir: string,
   closure: RuntimeClosure,
-  options: { installed: boolean },
+  options: { installed: boolean; copyLocalPackages?: boolean },
 ): Promise<ValidationResult> {
   const errors: string[] = [];
   const resolvedDeploymentDir = path.resolve(deploymentDir);
@@ -29,13 +29,14 @@ export async function validateDeployment(
     errors.push("Deployment package.json is missing.");
   }
 
-  // Every local dependency must have been copied.
-  for (const local of closure.localDependencies.values()) {
-    const dir = path.join(resolvedDeploymentDir, ...local.deploymentRelativePath.split("/"));
-    if (!(await pathExists(path.join(dir, "package.json")))) {
-      errors.push(
-        `Local dependency "${local.name}" was not materialized at ${local.deploymentRelativePath}.`,
-      );
+  if (options.copyLocalPackages) {
+    for (const local of closure.localDependencies.values()) {
+      const dir = path.join(resolvedDeploymentDir, ...local.deploymentRelativePath.split("/"));
+      if (!(await pathExists(path.join(dir, "package.json")))) {
+        errors.push(
+          `Local dependency "${local.name}" was not materialized at ${local.deploymentRelativePath}.`,
+        );
+      }
     }
   }
 

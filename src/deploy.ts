@@ -42,12 +42,16 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
   const materialized = await materialize(closure, graph.repositoryManifest, {
     deploymentDir: options.deploymentDir,
     includeDevDependencies: options.includeDevDependencies,
+    copyLocalPackages: options.copyLocalPackages,
     keepExistingDeploymentDir: options.keepExistingDeploymentDir,
   });
   warnings.push(...materialized.warnings);
 
   // Step 6: project the filtered deployment lockfile.
-  const lockfile = projectLockfile(repositoryLockfile, closure, materialized.deploymentManifest);
+  const lockfile = projectLockfile(repositoryLockfile, closure, materialized.deploymentManifest, {
+    copyLocalPackages: options.copyLocalPackages,
+    deploymentDir: options.deploymentDir,
+  });
   await writeJson(path.join(path.resolve(options.deploymentDir), "package-lock.json"), lockfile);
 
   // Step 8: install in the deployment directory.
@@ -63,6 +67,7 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
   // Step 9: validate.
   const validation = await validateDeployment(path.resolve(options.deploymentDir), closure, {
     installed: installMode !== "none",
+    copyLocalPackages: options.copyLocalPackages,
   });
   if (!validation.ok) {
     throw new Error(`Deployment validation failed:\n  - ${validation.errors.join("\n  - ")}`);

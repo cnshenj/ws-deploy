@@ -2,8 +2,7 @@
  * Shared data model for ws-deploy.
  *
  * The conceptual model mirrors SPEC.md §9 but is adapted to the concrete
- * decisions taken for the implementation (npm-only, copy-to-`local-packages`,
- * `npm install` with a seeded filtered lockfile).
+ * decisions taken for the implementation (npm-only and a seeded filtered lockfile).
  */
 
 import type { PackageJson as NpmPackageJson } from "@npmcli/package-json";
@@ -61,10 +60,10 @@ export interface WorkspaceGraph {
   nodes: Map<string, WorkspaceNode>;
 }
 
-/** Source classification for a materialized local dependency. */
+/** Source classification for a local dependency. */
 export type LocalSourceType = "workspace" | "file";
 
-/** An item that must be materialized (copied) into the deployment folder. */
+/** A local dependency that may be referenced from source or copied into the deployment folder. */
 export interface DeployLocalDependency {
   name: string;
   sourceType: LocalSourceType;
@@ -102,7 +101,7 @@ export interface RegistryDemand {
 export interface RuntimeClosure {
   /** The target workspace node copied to the deployment directory. */
   target: WorkspaceNode;
-  /** Local (workspace/file) dependencies to copy, keyed by name. */
+  /** Local (workspace/file) dependencies to install, keyed by name. */
   localDependencies: Map<string, DeployLocalDependency>;
   /** Registry packages keyed by `name@version` (the registry dependency graph). */
   registryPackages: Map<string, ClosureRegistryPackage>;
@@ -158,6 +157,8 @@ export interface DeployOptions {
   npmrc?: string;
   includeDevDependencies?: boolean;
   includeOptionalDependencies?: boolean;
+  /** Copy local packages into the deployment instead of installing them from their source paths. */
+  copyLocalPackages?: boolean;
   /** When true, do not delete an existing deployment directory. */
   keepExistingDeploymentDir?: boolean;
 }

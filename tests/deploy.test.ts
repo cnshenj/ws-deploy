@@ -13,6 +13,14 @@ async function readJson<T>(file: string): Promise<T> {
   return JSON.parse(await fs.readFile(file, "utf8")) as T;
 }
 
+function fileReference(fromDir: string, packageDir: string): string {
+  let relative = path.relative(fromDir, packageDir).replace(/\\/g, "/");
+  if (!relative.startsWith(".")) {
+    relative = `./${relative}`;
+  }
+  return `file:${relative}`;
+}
+
 describe("runWsDeploy (installMode none)", () => {
   let repositoryDir: string;
   let deploymentDir: string;
@@ -28,7 +36,7 @@ describe("runWsDeploy (installMode none)", () => {
     await fs.rm(deploymentDir, { recursive: true, force: true });
   });
 
-  it("materializes the deployment tree, rewrites manifests, and projects the lockfile", async () => {
+  it("references local source packages by default and projects packed lockfile entries", async () => {
     const result = await runWsDeploy({
       repositoryDir,
       targetWorkspace: "foo",
@@ -40,24 +48,15 @@ describe("runWsDeploy (installMode none)", () => {
     const deploymentManifest = await readJson<PackageJson>(
       path.join(deploymentDir, "package.json"),
     );
-    assert.equal(deploymentManifest.dependencies?.["lib"], "file:./local-packages/lib");
-    assert.equal(deploymentManifest.dependencies?.["shared"], "file:./local-packages/shared");
+    const libReference = fileReference(deploymentDir, path.join(repositoryDir, "packages/lib"));
+    const sharedReference = fileReference(deploymentDir, path.join(repositoryDir, "shared"));
+    assert.equal(deploymentManifest.dependencies?.["lib"], libReference);
+    assert.equal(deploymentManifest.dependencies?.["shared"], sharedReference);
     assert.equal(deploymentManifest.dependencies?.["somelib"], "^1.0.0");
     assert.equal(deploymentManifest.devDependencies, undefined);
     assert.equal(deploymentManifest.workspaces, undefined);
 
-    // Local deps copied.
-    assert.ok(
-      await fs.stat(path.join(deploymentDir, "local-packages/lib/package.json")).then(() => true),
-    );
-    assert.ok(
-      await fs
-        .stat(path.join(deploymentDir, "local-packages/shared/package.json"))
-        .then(() => true),
-    );
-
-    // bar must not leak into the deployment (AC7).
-    await assert.rejects(fs.stat(path.join(deploymentDir, "local-packages/bar")));
+    await assert.rejects(fs.stat(path.join(deploymentDir, "local-packages")));
 
     // Filtered lockfile preserves exact versions; lodash@3 hoists to deployment node_modules
     // (its monorepo nesting under somelib was only forced by bar's lodash@4,
@@ -73,9 +72,31 @@ describe("runWsDeploy (installMode none)", () => {
     assert.equal(lockfile.packages["node_modules/lodash"]?.integrity, "sha512-lodash3");
     assert.equal(lockfile.packages["node_modules/somelib/node_modules/lodash"], undefined);
     assert.equal(lockfile.packages["node_modules/leftpad"]?.version, "1.3.0");
-    assert.equal(lockfile.packages["node_modules/lib"]?.link, true);
-    assert.equal(lockfile.packages["node_modules/lib"]?.resolved, "local-packages/lib");
+    assert.equal(lockfile.packages["node_modules/lib"]?.link, undefined);
+    assert.equal(lockfile.packages["node_modules/lib"]?.version, "2.0.0");
+    assert.equal(lockfile.packages["node_modules/lib"]?.resolved, libReference);
+    assert.equal(lockfile.packages["node_modules/shared"]?.resolved, sharedReference);
     // The unrelated lodash@4 (bar's) is excluded.
     assert.notEqual(lockfile.packages["node_modules/lodash"]?.version, "4.17.21");
+  });
+
+  it("copies and rewrites local packages when requested", async () => {
+    const result = await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "foo",
+      deploymentDir,
+      installMode: "none",
+      copyLocalPackages: true,
+    });
+
+    const deploymentManifest = await readJson<PackageJson>(
+      path.join(deploymentDir, "package.json"),
+    );
+    assert.equal(deploymentManifest.dependencies?.["lib"], "file:./local-packages/lib");
+    await fs.access(path.join(deploymentDir, "local-packages/lib/package.json"));
+    assert.deepEqual(result.lockfile.packages["node_modules/lib"], {
+      resolved: "local-packages/lib",
+      link: true,
+    });
   });
 });

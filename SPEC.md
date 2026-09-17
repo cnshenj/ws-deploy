@@ -60,14 +60,16 @@ substitution.** Instead, the tool must:
 This projection is the only robust way to support workspace deps, file deps, multiple versions
 of the same package, exact-version fidelity, and exclusion of unrelated workspaces.
 
-### 3.4 Workspace and file dependencies are materialized locally
+### 3.4 Workspace and file dependencies are installed from local sources
 
 Any dependency declared as:
 
 - workspace dependency
 - `file:` dependency
 
-must be converted into a deployment-local artifact by:
+must be converted into a local `file:` dependency. By default, npm packs it directly from its
+source directory into `node_modules` using `--install-links`. When `copyLocalPackages` is enabled,
+the package is first staged by:
 
 - copying the package folder into the deployment
 
@@ -131,6 +133,7 @@ The tool accepts:
 - `includeDevDependencies`: boolean, default `false`
 - `includeOptionalDependencies`: boolean, default `false`
 - `keepExistingDeploymentDir`: boolean, default `false` (when true, do not wipe an existing deployment directory)
+- `copyLocalPackages`: boolean, default `false` (when true, stage local packages under `local-packages`)
 
 ---
 
@@ -188,8 +191,8 @@ The tool must detect dependencies that resolve to workspace packages using any o
 For each reachable workspace dependency:
 
 1. include it in the closure
-2. copy it into the deployment folder
-3. rewrite the target workspace package manifest so the dependency points to the deployment-local copy
+2. rewrite the target workspace package manifest to a `file:` reference relative to the deployment
+3. when `copyLocalPackages` is enabled, copy it into the deployment folder and reference that copy
 4. add a corresponding entry to the filtered deployment lockfile
 
 The tool must process workspace dependencies recursively.
@@ -206,8 +209,8 @@ The tool must detect file dependencies such as:
 For each file dependency:
 
 1. resolve the target package path
-2. copy the dependency into the deployment
-3. rewrite the dependency reference in the deployment manifest so it points to the deployment-local copy
+2. rewrite the dependency reference in the deployment manifest to the source path relative to the deployment
+3. when `copyLocalPackages` is enabled, copy it into the deployment and reference that copy
 4. add a corresponding entry to the filtered deployment lockfile
 
 File dependencies should be treated similarly to workspace dependencies, except their source is path-based rather than workspace graph based.
@@ -265,7 +268,7 @@ The filtered lockfile must include:
 - exact versions from the repository lockfile
 - dependency relationships only for the reachable subgraph
 - integrity and resolved metadata where available
-- local copy references for workspace/file dependencies
+- source-relative or staged `file:` references for workspace/file dependencies
 
 The filtered lockfile must omit:
 
@@ -289,7 +292,7 @@ beneath it. The deployment directory must contain:
 - target package files
 - filtered `package.json`
 - filtered lockfile
-- local copies of workspace/file dependencies
+- installed workspace/file dependencies under `node_modules`
 - a package manager installable graph
 
 Install is performed by npm (`npm ci`/`npm install`) behind a pluggable `InstallerAdapter`
@@ -339,7 +342,7 @@ Each module maps to one internal interface:
 | Dependency Classifier   | Classify each edge as workspace / file / registry / peer / dev                                      | `classifyDependency(name, specifier, workspaceNames)`                   |
 | Closure Resolver        | Traverse runtime edges from the target, collect local + registry packages                           | `computeRuntimeClosure(graph, lockfile, target, options)`               |
 | Lockfile Projector      | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(repositoryLockfile, closure, deploymentManifest)`      |
-| Deployment Materializer | Copy target + local deps, rewrite manifests to deployment-local `file:` refs                        | `materialize(closure, repositoryManifest, options)`                     |
+| Deployment Materializer | Copy target, optionally stage local deps, and rewrite local references                                | `materialize(closure, repositoryManifest, options)`                     |
 | Installer Adapter       | Run the chosen PM with the filtered lockfile and optional npm config                                | `getInstaller().install(deploymentDir, mode, npmrc?)`                   |
 | Validator               | Check the deployment folder is complete and installable                                             | `validateDeployment(deploymentDir, closure, options)`                   |
 
@@ -352,9 +355,9 @@ The run is a fixed sequence of stages; each maps to a requirement above.
 1. **Load** — read the repository `package.json`, repository `package-lock.json`, and workspace manifests; build the graph (FR2).
 2. **Resolve target** — locate the target node; fail early if missing (FR1, §11).
 3. **Compute closure** — traverse runtime edges, classifying each as workspace / file / registry (FR4–FR6).
-4. **Materialize** — copy the target and every local dep into `local-packages/<name>`, and rewrite manifests so workspace/`file:` specifiers become deployment-local `file:` refs; e.g. `workspace:*` and `file:../lib` both become `file:./local-packages/lib` (FR3–FR5, §3.4).
-5. **Project lockfile** — emit the filtered deployment lockfile: exact versions from the repository lockfile, local deps as `link` entries, unrelated packages omitted, placement per §8.1 (FR7, FR8).
-6. **Install** — when `installMode !== none`, run npm honoring the filtered lockfile (FR9).
+4. **Materialize** — copy the target and rewrite workspace/`file:` specifiers to source-relative `file:` refs. When `copyLocalPackages` is enabled, also copy every local dep into `local-packages/<name>` and rewrite local manifests to deployment-local refs (FR3–FR5, §3.4).
+5. **Project lockfile** — emit the filtered deployment lockfile: exact versions from the repository lockfile, local deps as regular `file:` entries by default or `link` entries in copy mode, unrelated packages omitted, placement per §8.1 (FR7, FR8).
+6. **Install** — when `installMode !== none`, run npm with `--install-links`, honoring the filtered lockfile (FR9).
 7. **Validate** — check the deployment folder is complete and installable (FR9, §11).
 
 ## 8.1 Registry placement — greedy most-used hoisting
@@ -440,7 +443,7 @@ The closure is not a flat inventory; it is a `RuntimeClosure`:
 ```text
 RuntimeClosure {
   target: WorkspaceNode
-  localDependencies: Map<name, DeployLocalDependency>   // workspace/file deps to copy
+  localDependencies: Map<name, DeployLocalDependency>   // workspace/file deps to install or stage
   registryPackages: Map<"name@version", ClosureRegistryPackage>
   topDemands: RegistryDemand[]   // { location, instanceKey } direct registry demands
   warnings: string[]
@@ -470,7 +473,8 @@ FilteredLockfile {
 }
 ```
 
-Local deps appear as a `link` entry plus a target entry; registry packages carry exact
+Local deps appear as regular `file:` entries by default, or as a `link` entry plus a target entry
+when `copyLocalPackages` is enabled; registry packages carry exact
 `version`/`resolved`/`integrity` copied from the repository lockfile. The legacy top-level
 `dependencies` map (lockfile v1) is not emitted.
 
@@ -485,7 +489,7 @@ retains both exact versions, placed per §8.1 (FR7).
 
 ## EC2. Workspace dependency with external dependencies
 
-If `lib` is a workspace package and it depends on `lodash`, the tool must copy `lib` and also include `lib`’s external dependency closure.
+If `lib` is a workspace package and it depends on `lodash`, the tool must install `lib` and also include `lib`’s external dependency closure. It is copied into `local-packages` only when `copyLocalPackages` is enabled.
 
 ## EC3. File dependency chain
 
@@ -519,7 +523,7 @@ If a package requires build output to execute, the deployment process must inclu
 - **a required runtime dependency is reachable but has no entry in the repository lockfile** — the
   lockfile is out of sync with the manifests; omitting it would ship a broken artifact (§3.1)
 - a placement invariant is violated (two versions demanded for one scope)
-- deployment validation fails (missing deployment manifest, an un-materialized local dep, or — after
+- deployment validation fails (missing deployment manifest, a requested but un-materialized local dep, or — after
   install — a local dep missing from `node_modules`)
 - the installer exits non-zero
 
@@ -580,7 +584,7 @@ Build in dependency order, because projection and materialization need an accura
 
 1. Workspace discovery and graph building.
 2. Runtime closure traversal.
-3. File/workspace dependency materialization.
+3. File/workspace reference rewriting and optional materialization.
 4. Lockfile projection (including placement, §8.1).
 5. Deployment install.
 6. Validation of the deployment folder.

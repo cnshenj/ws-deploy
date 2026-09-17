@@ -38,6 +38,7 @@ async function deploy(repositoryDir: string, target: string): Promise<NpmLockfil
     targetWorkspace: target,
     deploymentDir,
     installMode: "none",
+    copyLocalPackages: true,
   });
   return result.lockfile;
 }

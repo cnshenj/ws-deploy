@@ -240,6 +240,12 @@ describe("ws-deploy CLI E2E", () => {
       assert.equal(localLib.version, "1.0.0");
       assert.equal(devLocal.version, "2.0.0");
       assert.equal(devRegistryPackage.version, "4.0.0");
+      assert.equal(
+        (
+          await fs.lstat(path.join(deploymentDir, "node_modules/fixture-local-lib"))
+        ).isSymbolicLink(),
+        false,
+      );
       await assertMissing(path.join(deploymentDir, "node_modules/fixture-unrelated-workspace"));
       await assertMissing(path.join(deploymentDir, "node_modules/fixture-unrelated-registry"));
     } finally {

@@ -12,8 +12,8 @@ export interface InstallerAdapter {
 
 /** npm CLI arguments per install mode. */
 const NPM_ARGS: Record<Exclude<InstallMode, "none">, string[]> = {
-  "npm-ci": ["ci", "--ignore-scripts"],
-  "npm-install": ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+  "npm-ci": ["ci", "--install-links", "--ignore-scripts"],
+  "npm-install": ["install", "--install-links", "--ignore-scripts", "--no-audit", "--no-fund"],
 };
 
 /** npm-backed installer. */

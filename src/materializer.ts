@@ -1,4 +1,4 @@
-/** Materializes the deployment tree: copy files + rewrite manifests (SPEC §7.5 / FR3-5, Step 7). */
+/** Materializes the deployment tree: copy target files, optionally stage locals, rewrite manifests. */
 
 import * as path from "node:path";
 
@@ -18,19 +18,24 @@ function deploymentSubPath(name: string): string {
   return name;
 }
 
-/** Compute a `file:` reference from `manifestRelDir` to a local package's deployment directory. */
-function computeLocalReference(manifestRelDir: string, dependencyDeploymentPath: string): string {
-  const rel = path.relative(manifestRelDir || ".", dependencyDeploymentPath).replace(/\\/g, "/");
+/** Compute a portable `file:` reference between two absolute package directories. */
+function computeLocalReference(manifestDir: string, dependencyDir: string): string {
+  const rel = path.relative(manifestDir, dependencyDir).replace(/\\/g, "/");
   const normalized = rel.startsWith(".") ? rel : `./${rel}`;
   return `file:${normalized}`;
 }
 
-/** Rewrite a manifest so local deps point at deployment-local `file:` paths. */
+/** Rewrite a manifest so local deps point at source or deployment-local `file:` paths. */
 function rewriteManifest(
   manifest: PackageJson,
-  manifestRelDir: string,
+  manifestDir: string,
+  manifestLabel: string,
   closure: RuntimeClosure,
-  options: { includeDev: boolean; isDeploymentManifest: boolean },
+  options: {
+    includeDev: boolean;
+    isDeploymentManifest: boolean;
+    localPackageDir: (local: DeployLocalDependency) => string;
+  },
   warnings: string[],
 ): PackageJson {
   const rewritten: PackageJson = { ...manifest };
@@ -54,13 +59,13 @@ function rewriteManifest(
     for (const [name, spec] of Object.entries(original)) {
       const local = closure.localDependencies.get(name);
       if (local) {
-        next[name] = computeLocalReference(manifestRelDir, local.deploymentRelativePath);
+        next[name] = computeLocalReference(manifestDir, options.localPackageDir(local));
       } else if (spec === undefined) {
         continue;
       } else if (WORKSPACE_OR_FILE.test(spec)) {
         warnings.push(
           `Dropped unresolved ${section} entry "${name}": "${spec}" ` +
-            `in ${manifestRelDir || "<deployment>"} (not part of the runtime closure).`,
+            `in ${manifestLabel} (not part of the runtime closure).`,
         );
       } else {
         next[name] = spec; // registry dependency, left untouched
@@ -82,19 +87,20 @@ function rewriteManifest(
  *
  * 1. (Re)create the deployment directory.
  * 2. Copy the target workspace files into the deployment directory.
- * 3. Copy each local dependency into `local-packages/<name>`.
- * 4. Rewrite the deployment manifest and every local manifest so workspace/file
- *    specifiers point at deployment-local `file:` references.
+ * 3. Optionally copy each local dependency into `local-packages/<name>`.
+ * 4. Rewrite local references in the deployment manifest and, in copy mode,
+ *    in every staged local manifest.
  */
 export async function materialize(
   closure: RuntimeClosure,
   repositoryManifest: PackageJson,
   options: Pick<
     DeployOptions,
-    "deploymentDir" | "includeDevDependencies" | "keepExistingDeploymentDir"
+    "deploymentDir" | "includeDevDependencies" | "copyLocalPackages" | "keepExistingDeploymentDir"
   >,
 ): Promise<MaterializeResult> {
   const deploymentDir = path.resolve(options.deploymentDir);
+  const copyLocalPackages = options.copyLocalPackages ?? false;
   const warnings: string[] = [];
 
   if (!options.keepExistingDeploymentDir && (await isDirectory(deploymentDir))) {
@@ -104,18 +110,29 @@ export async function materialize(
   // Copy the target workspace into the deployment directory.
   await copyPackageDir(closure.target.path, deploymentDir, closure.target.manifest);
 
-  // Copy each local dependency.
-  for (const local of closure.localDependencies.values()) {
-    const dest = path.join(deploymentDir, ...local.deploymentRelativePath.split("/"));
-    await copyLocalDependency(local, dest);
+  if (copyLocalPackages) {
+    for (const local of closure.localDependencies.values()) {
+      const dest = path.join(deploymentDir, ...local.deploymentRelativePath.split("/"));
+      await copyLocalDependency(local, dest);
+    }
   }
+
+  const localPackageDir = (local: DeployLocalDependency): string =>
+    copyLocalPackages
+      ? path.join(deploymentDir, ...local.deploymentRelativePath.split("/"))
+      : local.sourcePath;
 
   // Rewrite the deployment manifest.
   const deploymentManifest = rewriteManifest(
     closure.target.manifest,
-    "",
+    deploymentDir,
+    "<deployment>",
     closure,
-    { includeDev: options.includeDevDependencies ?? false, isDeploymentManifest: true },
+    {
+      includeDev: options.includeDevDependencies ?? false,
+      isDeploymentManifest: true,
+      localPackageDir,
+    },
     warnings,
   );
   const repositoryOverrides = repositoryManifest["overrides"];
@@ -126,20 +143,19 @@ export async function materialize(
   }
   await writeJson(path.join(deploymentDir, "package.json"), deploymentManifest);
 
-  // Rewrite each local dependency manifest.
-  for (const local of closure.localDependencies.values()) {
-    const manifestRelDir = local.deploymentRelativePath;
-    const rewritten = rewriteManifest(
-      local.manifest,
-      manifestRelDir,
-      closure,
-      { includeDev: false, isDeploymentManifest: false },
-      warnings,
-    );
-    await writeJson(
-      path.join(deploymentDir, ...manifestRelDir.split("/"), "package.json"),
-      rewritten,
-    );
+  if (copyLocalPackages) {
+    for (const local of closure.localDependencies.values()) {
+      const manifestDir = localPackageDir(local);
+      const rewritten = rewriteManifest(
+        local.manifest,
+        manifestDir,
+        local.deploymentRelativePath,
+        closure,
+        { includeDev: false, isDeploymentManifest: false, localPackageDir },
+        warnings,
+      );
+      await writeJson(path.join(manifestDir, "package.json"), rewritten);
+    }
   }
 
   return { deploymentManifest, warnings };

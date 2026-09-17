@@ -107,6 +107,7 @@ describe("monorepo structure integration", () => {
       targetWorkspace: "@acme/api",
       deploymentDir,
       installMode: "none",
+      copyLocalPackages: true,
     });
 
     assert.deepEqual([...result.closure.localDependencies.keys()].toSorted(), [
@@ -155,6 +156,7 @@ describe("monorepo structure integration", () => {
       deploymentDir,
       installMode: "none",
       includeDevDependencies: true,
+      copyLocalPackages: true,
     });
 
     assert.deepEqual([...result.closure.localDependencies.keys()].toSorted(), [

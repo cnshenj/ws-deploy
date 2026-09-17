@@ -1,5 +1,7 @@
 /** Projects the repository lockfile into a filtered deployment lockfile (SPEC §7.4 / FR7-8). */
 
+import * as path from "node:path";
+
 import type {
   ClosureRegistryPackage,
   DependencyMap,
@@ -232,6 +234,7 @@ export function projectLockfile(
   repositoryLockfile: NpmLockfile,
   closure: RuntimeClosure,
   deploymentManifest: PackageJson,
+  options: { copyLocalPackages?: boolean; deploymentDir?: string } = {},
 ): NpmLockfile {
   const lockfileVersion =
     repositoryLockfile.lockfileVersion >= 2 ? repositoryLockfile.lockfileVersion : 3;
@@ -239,17 +242,30 @@ export function projectLockfile(
   const packages: Record<string, LockfilePackageEntry> = {
     "": buildDeploymentEntry(deploymentManifest),
   };
+  const copyLocalPackages = options.copyLocalPackages ?? false;
+  const deploymentDir = path.resolve(options.deploymentDir ?? ".");
 
-  // Local (workspace/file) dependencies become deployment-local file links.
+  // Local dependencies are either staged links or packed directly from their source directories.
   for (const local of closure.localDependencies.values()) {
-    packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
-      resolved: local.deploymentRelativePath,
-      link: true,
-    };
-    packages[local.deploymentRelativePath] = {
-      name: local.name,
-      version: local.version,
-    };
+    if (copyLocalPackages) {
+      packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
+        resolved: local.deploymentRelativePath,
+        link: true,
+      };
+      packages[local.deploymentRelativePath] = {
+        name: local.name,
+        version: local.version,
+      };
+    } else {
+      let relativeSource = path.relative(deploymentDir, local.sourcePath).replace(/\\/g, "/");
+      if (!relativeSource.startsWith(".")) {
+        relativeSource = `./${relativeSource}`;
+      }
+      packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
+        version: local.version,
+        resolved: `file:${relativeSource}`,
+      };
+    }
   }
 
   // Registry dependencies: hoist by most-used version, nesting conflicts.
@@ -260,18 +276,32 @@ export function projectLockfile(
     closure.topDemands,
   );
   // Deployment package demands first, then locals, each in a stable order (NFR1).
-  const demands = [...closure.topDemands].toSorted((a, b) => {
-    if (a.location !== b.location) {
-      if (a.location === "") {
-        return -1;
+  const localInstallScopes = new Map(
+    [...closure.localDependencies.values()].map((local) => [
+      local.deploymentRelativePath,
+      `${NODE_MODULES_PREFIX}${local.name}`,
+    ]),
+  );
+  const demands = closure.topDemands
+    .map((demand) => ({
+      ...demand,
+      location:
+        !copyLocalPackages && demand.location !== ""
+          ? (localInstallScopes.get(demand.location) ?? demand.location)
+          : demand.location,
+    }))
+    .toSorted((a, b) => {
+      if (a.location !== b.location) {
+        if (a.location === "") {
+          return -1;
+        }
+        if (b.location === "") {
+          return 1;
+        }
+        return a.location.localeCompare(b.location);
       }
-      if (b.location === "") {
-        return 1;
-      }
-      return a.location.localeCompare(b.location);
-    }
-    return a.instanceKey.localeCompare(b.instanceKey);
-  });
+      return a.instanceKey.localeCompare(b.instanceKey);
+    });
   for (const demand of demands) {
     placer.place(demand.location, demand.instanceKey);
   }
