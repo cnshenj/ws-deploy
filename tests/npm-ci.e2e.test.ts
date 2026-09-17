@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -203,7 +204,7 @@ describe("ws-deploy CLI E2E", () => {
         ],
         {
           cwd: PROJECT_DIR,
-          env: { npm_config_allow_remote: "all" },
+          env: { npm_config_allow_remote: "all", NODE_ENV: "production" },
         },
       );
       const projectedLockfile = await readJson<NpmLockfile>(
@@ -337,6 +338,368 @@ describe("ws-deploy CLI E2E", () => {
       await fs.rm(repositoryDir, { recursive: true, force: true });
     }
   });
+  for (const copyLocalPackages of [false, true]) {
+    it(`installs recursive local packages and file aliases with exact nested versions (copy=${copyLocalPackages})`, async () => {
+      const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-recursive-ci-"));
+      const tarballs = new Map<string, string>();
+      const { server, origin } = await startTarballServer(tarballs);
+
+      try {
+        const sharedV1 = await packPackage(repositoryDir, tarballs, {
+          name: "fixture-shared",
+          version: "1.0.0",
+        });
+        const sharedV2 = await packPackage(repositoryDir, tarballs, {
+          name: "fixture-shared",
+          version: "2.0.0",
+        });
+        const peerArchive = await packPackage(repositoryDir, tarballs, {
+          name: "fixture-local-peer",
+          version: "7.0.0",
+        });
+        await writeJson(path.join(repositoryDir, "package.json"), {
+          name: "repository",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "fixture-shared": `${origin}/${sharedV1}` },
+          devDependencies: { "fixture-local-peer": `${origin}/${peerArchive}` },
+        });
+        await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+          name: "fixture-app",
+          version: "1.0.0",
+          dependencies: {
+            "fixture-lib": "^1.0.0",
+            "file-alias": "file:../../file-source",
+            "fixture-shared": `${origin}/${sharedV1}`,
+          },
+        });
+        await writeJson(path.join(repositoryDir, "packages/lib/package.json"), {
+          name: "fixture-lib",
+          version: "1.0.0",
+          dependencies: { "fixture-leaf": "^1.0.0" },
+          peerDependencies: { "fixture-local-peer": "^7.0.0", "fixture-absent-peer": "*" },
+          peerDependenciesMeta: { "fixture-absent-peer": { optional: true } },
+        });
+        await writeJson(path.join(repositoryDir, "packages/leaf/package.json"), {
+          name: "fixture-leaf",
+          version: "1.0.0",
+        });
+        await writeJson(path.join(repositoryDir, "file-source/package.json"), {
+          name: "actual-file-package",
+          version: "3.0.0",
+          dependencies: { "fixture-shared": `${origin}/${sharedV2}` },
+        });
+        await execa(
+          "npm",
+          [
+            "install",
+            "--package-lock-only",
+            "--install-links",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+          ],
+          { cwd: repositoryDir, env: { npm_config_allow_remote: "all" } },
+        );
+
+        const deploymentDir = path.join(repositoryDir, "deployment");
+        await execa(
+          "node",
+          [
+            "--import",
+            "tsx",
+            CLI_PATH,
+            "--target",
+            "fixture-app",
+            "--repository-dir",
+            repositoryDir,
+            "--deployment-dir",
+            deploymentDir,
+            ...(copyLocalPackages ? ["--copy-local-packages"] : []),
+          ],
+          { cwd: PROJECT_DIR, env: { npm_config_allow_remote: "all", NODE_ENV: "production" } },
+        );
+
+        const deploymentRequire = createRequire(path.join(deploymentDir, "package.json"));
+        const localRequire = createRequire(deploymentRequire.resolve("fixture-lib/package.json"));
+        const aliasRequire = createRequire(deploymentRequire.resolve("file-alias/package.json"));
+        const leaf = await readJson<PackageJson>(localRequire.resolve("fixture-leaf/package.json"));
+        const shared = await readJson<PackageJson>(
+          deploymentRequire.resolve("fixture-shared/package.json"),
+        );
+        const nested = await readJson<PackageJson>(
+          aliasRequire.resolve("fixture-shared/package.json"),
+        );
+        const aliased = await readJson<PackageJson>(
+          deploymentRequire.resolve("file-alias/package.json"),
+        );
+        const localPeer = await readJson<PackageJson>(
+          localRequire.resolve("fixture-local-peer/package.json"),
+        );
+
+        assert.equal(leaf.version, "1.0.0");
+        assert.equal(shared.version, "1.0.0");
+        assert.equal(nested.version, "2.0.0");
+        assert.equal(aliased.name, "actual-file-package");
+        assert.equal(localPeer.version, "7.0.0");
+        await assertMissing(path.join(deploymentDir, "node_modules/fixture-absent-peer"));
+      } finally {
+        await closeServer(server);
+        await fs.rm(repositoryDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const installMode of ["npm-ci", "npm-install"] as const) {
+    for (const copyLocalPackages of [false, true]) {
+      it(`installs a local tarball with ${installMode} (copy=${copyLocalPackages}) without lifecycle scripts`, async () => {
+        const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-tarball-"));
+        try {
+          const archive = await packPackage(repositoryDir, new Map(), {
+            name: "fixture-archive",
+            version: "2.3.0",
+            scripts: { postinstall: 'node -e "process.exit(42)"' },
+          });
+          await writeJson(path.join(repositoryDir, "package.json"), {
+            name: "repository",
+            private: true,
+            workspaces: ["packages/*"],
+          });
+          await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { "archive-alias": `file:../../tarballs/${archive}` },
+          });
+          await execa(
+            "npm",
+            ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
+            {
+              cwd: repositoryDir,
+            },
+          );
+          const sourceLockfile = await readJson<NpmLockfile>(
+            path.join(repositoryDir, "package-lock.json"),
+          );
+          const deploymentDir = path.join(repositoryDir, "deployment");
+
+          await execa(
+            "node",
+            [
+              "--import",
+              "tsx",
+              CLI_PATH,
+              "--target",
+              "app",
+              "--repository-dir",
+              repositoryDir,
+              "--deployment-dir",
+              deploymentDir,
+              "--install",
+              installMode,
+              ...(copyLocalPackages ? ["--copy-local-packages"] : []),
+            ],
+            { cwd: PROJECT_DIR },
+          );
+
+          const installed = await readJson<PackageJson>(
+            path.join(deploymentDir, "node_modules/archive-alias/package.json"),
+          );
+          const projected = await readJson<NpmLockfile>(
+            path.join(deploymentDir, "package-lock.json"),
+          );
+          const deployedManifest = await readJson<PackageJson>(
+            path.join(deploymentDir, "package.json"),
+          );
+          assert.equal(installed.name, "fixture-archive");
+          assert.equal(installed.version, "2.3.0");
+          assert.equal(
+            projected.packages["node_modules/archive-alias"]?.integrity,
+            sourceLockfile.packages["node_modules/archive-alias"]?.integrity,
+          );
+          assert.match(
+            deployedManifest.dependencies?.["archive-alias"] ?? "",
+            copyLocalPackages ? /^file:\.\/local-tarballs\// : /^file:\.\.\/tarballs\//,
+          );
+          if (copyLocalPackages) {
+            const reference = deployedManifest.dependencies?.["archive-alias"];
+            assert.ok(reference);
+            const copied = await fs.readFile(
+              path.resolve(deploymentDir, reference.slice("file:".length)),
+            );
+            assert.deepEqual(
+              copied,
+              await fs.readFile(path.join(repositoryDir, "tarballs", archive)),
+            );
+          }
+        } finally {
+          await fs.rm(repositoryDir, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+
+  for (const includeOptional of [false, true]) {
+    it(`applies optional dependency policy and platform restrictions (include=${includeOptional})`, async () => {
+      const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-platform-"));
+      const tarballs = new Map<string, string>();
+      const { server, origin } = await startTarballServer(tarballs);
+      try {
+        const nativeArchive = await packPackage(repositoryDir, tarballs, {
+          name: "fixture-native",
+          version: "1.0.0",
+          os: [`!${process.platform}`],
+        });
+        const extraArchive = await packPackage(repositoryDir, tarballs, {
+          name: "fixture-extra",
+          version: "2.0.0",
+        });
+        const consumerArchive = await packPackage(repositoryDir, tarballs, {
+          name: "fixture-consumer",
+          version: "3.0.0",
+          optionalDependencies: {
+            "fixture-native": `${origin}/${nativeArchive}`,
+            "fixture-extra": `${origin}/${extraArchive}`,
+          },
+        });
+        await writeJson(path.join(repositoryDir, "package.json"), {
+          name: "repository",
+          private: true,
+          workspaces: ["packages/*"],
+        });
+        await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+          name: "app",
+          version: "1.0.0",
+          dependencies: {
+            "fixture-consumer": `${origin}/${consumerArchive}`,
+            "fixture-native": "0.0.0",
+          },
+          optionalDependencies: { "fixture-native": `${origin}/${nativeArchive}` },
+        });
+        await execa(
+          "npm",
+          ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
+          {
+            cwd: repositoryDir,
+            env: { npm_config_allow_remote: "all" },
+          },
+        );
+        const deploymentDir = path.join(repositoryDir, "deployment");
+
+        await execa(
+          "node",
+          [
+            "--import",
+            "tsx",
+            CLI_PATH,
+            "--target",
+            "app",
+            "--repository-dir",
+            repositoryDir,
+            "--deployment-dir",
+            deploymentDir,
+            ...(includeOptional ? ["--include-optional"] : []),
+          ],
+          { cwd: PROJECT_DIR, env: { npm_config_allow_remote: "all" } },
+        );
+
+        const projected = await readJson<NpmLockfile>(
+          path.join(deploymentDir, "package-lock.json"),
+        );
+        assert.equal(
+          (
+            await readJson<PackageJson>(
+              path.join(deploymentDir, "node_modules/fixture-consumer/package.json"),
+            )
+          ).version,
+          "3.0.0",
+        );
+        await assertMissing(path.join(deploymentDir, "node_modules/fixture-native"));
+        if (includeOptional) {
+          assert.deepEqual(projected.packages["node_modules/fixture-native"]?.["os"], [
+            `!${process.platform}`,
+          ]);
+          assert.equal(projected.packages["node_modules/fixture-native"]?.optional, true);
+          assert.equal(
+            (
+              await readJson<PackageJson>(
+                path.join(deploymentDir, "node_modules/fixture-extra/package.json"),
+              )
+            ).version,
+            "2.0.0",
+          );
+        } else {
+          assert.equal(projected.packages["node_modules/fixture-native"], undefined);
+          assert.equal(projected.packages["node_modules/fixture-extra"], undefined);
+          await assertMissing(path.join(deploymentDir, "node_modules/fixture-extra"));
+        }
+      } finally {
+        await closeServer(server);
+        await fs.rm(repositoryDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const copyLocalPackages of [false, true]) {
+    it(`permits a platform-incompatible optional local package (copy=${copyLocalPackages})`, async () => {
+      const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-optional-local-"));
+      try {
+        await writeJson(path.join(repositoryDir, "package.json"), {
+          name: "repository",
+          private: true,
+          workspaces: ["packages/*"],
+        });
+        await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+          name: "app",
+          version: "1.0.0",
+          optionalDependencies: { "optional-local": "file:../../optional-local" },
+        });
+        await writeJson(path.join(repositoryDir, "optional-local/package.json"), {
+          name: "optional-local",
+          version: "1.0.0",
+          os: [`!${process.platform}`],
+        });
+        await execa(
+          "npm",
+          [
+            "install",
+            "--package-lock-only",
+            "--install-links",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+          ],
+          {
+            cwd: repositoryDir,
+          },
+        );
+        const deploymentDir = path.join(repositoryDir, "deployment");
+
+        const result = await execa(
+          "node",
+          [
+            "--import",
+            "tsx",
+            CLI_PATH,
+            "--target",
+            "app",
+            "--repository-dir",
+            repositoryDir,
+            "--deployment-dir",
+            deploymentDir,
+            "--include-optional",
+            ...(copyLocalPackages ? ["--copy-local-packages"] : []),
+          ],
+          { cwd: PROJECT_DIR },
+        );
+
+        assert.match(result.stdout, /Deployment ready:/);
+        await assertMissing(path.join(deploymentDir, "node_modules/optional-local"));
+      } finally {
+        await fs.rm(repositoryDir, { recursive: true, force: true });
+      }
+    });
+  }
+
   it("uses the npm configuration supplied by --npmrc", async () => {
     const temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-npmrc-"));
 

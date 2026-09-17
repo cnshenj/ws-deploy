@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { after, describe, it } from "node:test";
 
 import { computeRuntimeClosure } from "../src/closure.js";
+import { runWsDeploy } from "../src/deploy.js";
 import { loadRepositoryLockfile } from "../src/lockfile.js";
 import { loadWorkspaceGraph, resolveTargetWorkspace } from "../src/workspace-graph.js";
 
@@ -34,6 +35,7 @@ async function buildPolicyRepository(requiredName = "required"): Promise<string>
       "optional-missing": "^4.0.0",
     },
     peerDependencies: { peerpkg: "^5.0.0" },
+    peerDependenciesMeta: { peerpkg: { optional: true } },
   });
   await fs.writeFile(path.join(repositoryDir, "packages/app/index.js"), "export const app = 1;\n");
   await writeJson(path.join(repositoryDir, "package-lock.json"), {
@@ -148,5 +150,145 @@ describe("runtime closure policies", () => {
       closureFor(repositoryDir, {}),
       /Runtime dependency "missing-required".*package-lock\.json is out of sync/s,
     );
+  });
+
+  it("lets optional declarations override regular and dev dependencies throughout the closure", async () => {
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
+    await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+      name: "app",
+      version: "1.0.0",
+      dependencies: { required: "^1.0.0", "optional-missing": "^1.0.0" },
+      devDependencies: { "optional-missing": "^2.0.0" },
+      optionalDependencies: { "optional-missing": "^4.0.0" },
+    });
+    const lockfile = await loadRepositoryLockfile(repositoryDir);
+    const required = lockfile.packages["node_modules/required"]!;
+    required.dependencies = { "optional-missing": "^1.0.0" };
+    required.optionalDependencies = { "optional-missing": "^4.0.0" };
+    await writeJson(path.join(repositoryDir, "package-lock.json"), lockfile);
+
+    const omitted = await closureFor(repositoryDir, { includeDevDependencies: true });
+    assert.deepEqual([...omitted.registryPackages.keys()], ["required@1.1.0"]);
+    assert.deepEqual(omitted.warnings, []);
+
+    const deployment = await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "app",
+      deploymentDir: path.join(repositoryDir, "deployment"),
+      installMode: "none",
+      includeDevDependencies: true,
+    });
+    assert.deepEqual(deployment.lockfile.packages[""]?.dependencies, { required: "^1.0.0" });
+    assert.deepEqual(deployment.lockfile.packages[""]?.devDependencies, {});
+    assert.equal(deployment.lockfile.packages[""]?.optionalDependencies, undefined);
+    assert.deepEqual(deployment.lockfile.packages["node_modules/required"]?.dependencies, {});
+    assert.equal(
+      deployment.lockfile.packages["node_modules/required"]?.optionalDependencies,
+      undefined,
+    );
+
+    const included = await closureFor(repositoryDir, {
+      includeDevDependencies: true,
+      includeOptionalDependencies: true,
+    });
+    assert.deepEqual([...included.registryPackages.keys()], ["required@1.1.0"]);
+    assert.equal(included.warnings.length, 2);
+    assert.ok(
+      included.warnings.every((warning) =>
+        warning.startsWith('Optional registry dependency "optional-missing"'),
+      ),
+    );
+  });
+
+  it("does not retain dev dependencies when a workspace graph is reused", async () => {
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
+    const graph = await loadWorkspaceGraph(repositoryDir);
+    const lockfile = await loadRepositoryLockfile(repositoryDir);
+    const target = resolveTargetWorkspace(graph, "app");
+    const originalDependencies = [...target.dependencies];
+
+    const development = await computeRuntimeClosure(graph, lockfile, target, {
+      includeDevDependencies: true,
+    });
+    const production = await computeRuntimeClosure(graph, lockfile, target, {});
+
+    assert.ok(development.registryPackages.has("devpkg@2.1.0"));
+    assert.equal(production.registryPackages.has("devpkg@2.1.0"), false);
+    assert.deepEqual(target.dependencies, originalDependencies);
+  });
+
+  it("includes required target peers from the lockfile without including target dev dependencies", async () => {
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
+    await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+      name: "app",
+      version: "1.0.0",
+      peerDependencies: { peerpkg: "^5.0.0", missing: "*" },
+      peerDependenciesMeta: { missing: { optional: true } },
+      devDependencies: { devpkg: "^2.0.0" },
+    });
+
+    const closure = await closureFor(repositoryDir, {});
+
+    assert.deepEqual([...closure.registryPackages.keys()], ["peerpkg@5.1.0"]);
+    assert.deepEqual(closure.warnings, []);
+  });
+
+  it("rechecks an optional subtree when a required consumer also needs it", async () => {
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
+    await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+      name: "app",
+      version: "1.0.0",
+      dependencies: { first: "*", required: "*" },
+    });
+    const lockfile = await loadRepositoryLockfile(repositoryDir);
+    lockfile.packages["node_modules/first"] = {
+      version: "1.0.0",
+      optionalDependencies: { shared: "*" },
+    };
+    lockfile.packages["node_modules/required"]!.dependencies = { shared: "*" };
+    lockfile.packages["node_modules/shared"] = {
+      version: "1.0.0",
+      dependencies: { absent: "*" },
+    };
+    await writeJson(path.join(repositoryDir, "package-lock.json"), lockfile);
+
+    await assert.rejects(
+      closureFor(repositoryDir, { includeOptionalDependencies: true }),
+      /Runtime dependency "absent".*package-lock\.json is out of sync/s,
+    );
+  });
+
+  it("omits missing optional workspace, directory, and tarball sources", async () => {
+    const repositoryDir = await buildPolicyRepository();
+    cleanups.push(repositoryDir);
+    await writeJson(path.join(repositoryDir, "packages/app/package.json"), {
+      name: "app",
+      version: "1.0.0",
+      optionalDependencies: {
+        "missing-workspace": "workspace:*",
+        "missing-directory": "file:../../absent",
+        "missing-tarball": "file:../../absent.tgz",
+      },
+    });
+
+    const result = await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "app",
+      deploymentDir: path.join(repositoryDir, "deployment"),
+      installMode: "none",
+      includeOptionalDependencies: true,
+    });
+
+    assert.equal(result.closure.localDependencies.size, 0);
+    assert.equal(result.closure.registryPackages.size, 0);
+    assert.deepEqual(result.lockfile.packages[""]?.optionalDependencies, {});
+    assert.equal(result.warnings.length, 3);
+    for (const name of ["missing-workspace", "missing-directory", "missing-tarball"]) {
+      assert.ok(result.warnings.some((warning) => warning.includes(`"${name}"`)));
+    }
   });
 });

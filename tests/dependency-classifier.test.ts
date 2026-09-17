@@ -21,6 +21,16 @@ describe("classifyDependency", () => {
     assert.equal(classifyDependency("shared", "3.0.0", workspaces), "workspace");
   });
 
+  it("keeps explicit external sources when the name matches a workspace", () => {
+    for (const specifier of [
+      "npm:other-lib@^2.0.0",
+      "github:owner/lib#v2.0.0",
+      "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz",
+    ]) {
+      assert.equal(classifyDependency("lib", specifier, workspaces), "registry", specifier);
+    }
+  });
+
   it("classifies everything else as registry", () => {
     assert.equal(classifyDependency("lodash", "^4.0.0", workspaces), "registry");
     assert.equal(classifyDependency("somelib", "1.2.0", workspaces), "registry");

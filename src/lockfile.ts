@@ -7,23 +7,29 @@ import { pathExists, readJson } from "./filesystem.js";
 
 /** Load the repository npm lockfile. Throws when missing. */
 export async function loadRepositoryLockfile(repositoryDir: string): Promise<NpmLockfile> {
-  const lockPath = path.join(repositoryDir, "package-lock.json");
+  const shrinkwrap = path.join(repositoryDir, "npm-shrinkwrap.json");
+  const lockPath = (await pathExists(shrinkwrap))
+    ? shrinkwrap
+    : path.join(repositoryDir, "package-lock.json");
   if (!(await pathExists(lockPath))) {
-    const shrinkwrap = path.join(repositoryDir, "npm-shrinkwrap.json");
-    if (await pathExists(shrinkwrap)) {
-      return readJson<NpmLockfile>(shrinkwrap);
-    }
     throw new Error(
       `Repository lockfile not found at ${lockPath}. ws-deploy requires a package-lock.json ` +
         `as the source of truth for exact versions.`,
     );
   }
   const lockfile = await readJson<NpmLockfile>(lockPath);
-  if (!lockfile.packages) {
+  if (
+    !lockfile.packages ||
+    typeof lockfile.packages !== "object" ||
+    Array.isArray(lockfile.packages)
+  ) {
     throw new Error(
       `Repository lockfile ${lockPath} has no "packages" map ` +
         `(lockfileVersion >= 2 is required).`,
     );
+  }
+  if (!Number.isInteger(lockfile.lockfileVersion) || lockfile.lockfileVersion < 2) {
+    throw new Error(`Repository lockfile ${lockPath} requires lockfileVersion >= 2.`);
   }
   return lockfile;
 }

@@ -41,6 +41,9 @@ export function classifyDependency(
   if (parsed.type === "file" || parsed.type === "directory") {
     return "file";
   }
+  if (parsed.type === "alias" || parsed.type === "git" || parsed.type === "remote") {
+    return "registry";
+  }
   if (workspaceNames.has(depName)) {
     return "workspace";
   }
@@ -85,8 +88,19 @@ export function classifyManifest(
   optionalDependencies: DependencyEdge[];
 } {
   return {
-    dependencies: buildEdges(fromPackage, manifest.dependencies, "prod", workspaceNames),
-    devDependencies: buildEdges(fromPackage, manifest.devDependencies, "dev", workspaceNames),
+    dependencies: buildEdges(fromPackage, manifest.dependencies, "prod", workspaceNames).filter(
+      (edge) => manifest.optionalDependencies?.[edge.depName] === undefined,
+    ),
+    devDependencies: buildEdges(
+      fromPackage,
+      manifest.devDependencies,
+      "dev",
+      workspaceNames,
+    ).filter(
+      (edge) =>
+        manifest.dependencies?.[edge.depName] === undefined &&
+        manifest.optionalDependencies?.[edge.depName] === undefined,
+    ),
     peerDependencies: buildEdges(fromPackage, manifest.peerDependencies, "peer", workspaceNames),
     optionalDependencies: buildEdges(
       fromPackage,

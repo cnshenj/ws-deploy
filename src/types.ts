@@ -66,6 +66,7 @@ export type LocalSourceType = "workspace" | "file";
 /** A local dependency that may be referenced from source or copied into the deployment folder. */
 export interface DeployLocalDependency {
   name: string;
+  optional?: boolean;
   sourceType: LocalSourceType;
   /** Absolute path to the source package directory. */
   sourcePath: string;
@@ -81,9 +82,11 @@ export interface DeployLocalDependency {
 export interface ClosureRegistryPackage {
   name: string;
   version: string;
+  optional?: boolean;
+  localTarball?: { sourcePath: string; deploymentRelativePath: string };
   /** Lockfile key in the repository lockfile, e.g. `node_modules/lodash`. */
   lockfileKey: string;
-  /** Registry dependency edges as `name@version` instance keys. */
+  /** Registry dependency edges as opaque keys distinguishing locked source and dependency contexts. */
   dependencies: string[];
   /** Resolved peer edges that must be installed beside this package. */
   peerDependencies: string[];
@@ -93,7 +96,7 @@ export interface ClosureRegistryPackage {
 export interface RegistryDemand {
   /** Deployment location: `""` for the deployment package, else a local dependency path. */
   location: string;
-  /** The demanded registry package as a `name@version` instance key. */
+  /** The demanded registry package's instance key. */
   instanceKey: string;
 }
 
@@ -101,9 +104,11 @@ export interface RegistryDemand {
 export interface RuntimeClosure {
   /** The target workspace node copied to the deployment directory. */
   target: WorkspaceNode;
+  includeOptionalDependencies?: boolean;
   /** Local (workspace/file) dependencies to install, keyed by name. */
   localDependencies: Map<string, DeployLocalDependency>;
-  /** Registry packages keyed by `name@version` (the registry dependency graph). */
+  localResolutions?: Map<string, Map<string, string>>;
+  /** Registry packages keyed by exact source/dependency instance identity. */
   registryPackages: Map<string, ClosureRegistryPackage>;
   /** Direct registry demands from the deployment package and each local dependency. */
   topDemands: RegistryDemand[];

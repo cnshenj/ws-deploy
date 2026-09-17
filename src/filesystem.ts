@@ -45,6 +45,45 @@ export async function isDirectory(target: string): Promise<boolean> {
   }
 }
 
+async function canonicalPath(target: string): Promise<string> {
+  try {
+    return await fs.realpath(target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
+      throw error;
+    }
+    const parent = path.dirname(target);
+    return parent === target
+      ? target
+      : path.join(await canonicalPath(parent), path.basename(target));
+  }
+}
+
+function containsPath(parent: string, target: string): boolean {
+  const relative = path.relative(parent, target);
+  return (
+    relative === "" ||
+    (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+  );
+}
+
+export async function assertSafeDeploymentDirectory(
+  deploymentDir: string,
+  sourceDirectories: string[],
+): Promise<void> {
+  const destination = await canonicalPath(path.resolve(deploymentDir));
+  for (const sourceDirectory of new Set(sourceDirectories)) {
+    const source = await canonicalPath(path.resolve(sourceDirectory));
+    if (containsPath(source, destination) || containsPath(destination, source)) {
+      throw new Error(
+        `Deployment directory "${deploymentDir}" overlaps source package "${sourceDirectory}". ` +
+          `Choose an output directory outside all source packages.`,
+      );
+    }
+  }
+}
+
 /**
  * Copy a package directory into `dest`, honoring npm's own packing rules.
  *

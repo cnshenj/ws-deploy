@@ -57,6 +57,7 @@ describe("lockfile integration", () => {
       devDependencies: { devpkg: "^4.0.0" },
       optionalDependencies: { optional: "^2.0.0" },
       peerDependencies: { peer: "^3.0.0" },
+      peerDependenciesMeta: { peer: { optional: true } },
     };
     const repositoryOverrides = { dep: "1.2.0" };
     const repositoryDir = await buildRepository(
@@ -126,5 +127,56 @@ describe("lockfile integration", () => {
       loadRepositoryLockfile(repositoryDir),
       /has no "packages" map \(lockfileVersion >= 2 is required\)/,
     );
+  });
+
+  it("prefers npm-shrinkwrap.json and supports it without a package-lock.json", async () => {
+    const repositoryDir = await buildRepository({
+      lockfileVersion: 3,
+      packages: { "": { name: "package-lock" } },
+    });
+    cleanups.push(repositoryDir);
+    const shrinkwrap = {
+      lockfileVersion: 3,
+      packages: { "": { name: "shrinkwrap" } },
+    };
+    await writeJson(path.join(repositoryDir, "npm-shrinkwrap.json"), shrinkwrap);
+
+    assert.deepEqual(await loadRepositoryLockfile(repositoryDir), shrinkwrap);
+    await fs.rm(path.join(repositoryDir, "package-lock.json"));
+    assert.deepEqual(await loadRepositoryLockfile(repositoryDir), shrinkwrap);
+  });
+
+  it("validates shrinkwraps instead of falling back to a different lockfile", async () => {
+    const repositoryDir = await buildRepository({ lockfileVersion: 3, packages: {} });
+    cleanups.push(repositoryDir);
+    await writeJson(path.join(repositoryDir, "npm-shrinkwrap.json"), {
+      lockfileVersion: 1,
+      dependencies: { dep: { version: "1.0.0" } },
+    });
+
+    await assert.rejects(
+      loadRepositoryLockfile(repositoryDir),
+      /npm-shrinkwrap\.json.*has no "packages" map/,
+    );
+  });
+
+  it("rejects unsupported versions and malformed package maps", async () => {
+    const repositoryDir = await buildRepository({ lockfileVersion: 1, packages: {} });
+    cleanups.push(repositoryDir);
+    await assert.rejects(loadRepositoryLockfile(repositoryDir), /requires lockfileVersion >= 2/);
+
+    await writeJson(path.join(repositoryDir, "package-lock.json"), {
+      lockfileVersion: 3,
+      packages: [],
+    });
+    await assert.rejects(loadRepositoryLockfile(repositoryDir), /has no "packages" map/);
+  });
+
+  it("reports a missing repository lockfile", async () => {
+    const repositoryDir = await buildRepository({ lockfileVersion: 3, packages: {} });
+    cleanups.push(repositoryDir);
+    await fs.rm(path.join(repositoryDir, "package-lock.json"));
+
+    await assert.rejects(loadRepositoryLockfile(repositoryDir), /Repository lockfile not found/);
   });
 });

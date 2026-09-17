@@ -195,3 +195,119 @@ describe("monorepo structure integration", () => {
     await fs.access(path.join(deploymentDir, "local-packages/file-dev/index.js"));
   });
 });
+
+describe("local source resolution", () => {
+  it("rejects distinct local sources using the same dependency name", async (context) => {
+    const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-local-conflict-"));
+    context.after(() => fs.rm(repositoryDir, { recursive: true, force: true }));
+    await writeJson(path.join(repositoryDir, "package.json"), {
+      name: "repository",
+      private: true,
+      workspaces: ["packages/*"],
+    });
+    await writePackage(repositoryDir, "packages/app", {
+      name: "app",
+      version: "1.0.0",
+      dependencies: { shared: "file:../../first", consumer: "workspace:*" },
+    });
+    await writePackage(repositoryDir, "packages/consumer", {
+      name: "consumer",
+      version: "1.0.0",
+      dependencies: { shared: "file:../../second" },
+    });
+    await writePackage(repositoryDir, "first", { name: "shared", version: "1.0.0" });
+    await writePackage(repositoryDir, "second", { name: "shared", version: "2.0.0" });
+    await writeJson(path.join(repositoryDir, "package-lock.json"), {
+      lockfileVersion: 3,
+      packages: {},
+    });
+
+    await assert.rejects(
+      runWsDeploy({
+        repositoryDir,
+        targetWorkspace: "app",
+        deploymentDir: path.join(repositoryDir, "output"),
+        installMode: "none",
+      }),
+      /Distinct local sources under the same dependency name are not supported/,
+    );
+    await assert.rejects(fs.access(path.join(repositoryDir, "output")), { code: "ENOENT" });
+  });
+
+  for (const copyLocalPackages of [false, true]) {
+    it(`preserves registry workspace fallbacks and packed file aliases (copy=${copyLocalPackages})`, async (context) => {
+      const repositoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-local-resolution-"));
+      context.after(() => fs.rm(repositoryDir, { recursive: true, force: true }));
+      await writeJson(path.join(repositoryDir, "package.json"), {
+        name: "repository",
+        private: true,
+        workspaces: ["packages/*"],
+      });
+      await writePackage(repositoryDir, "packages/app", {
+        name: "app",
+        version: "1.0.0",
+        dependencies: { lib: "^2.0.0", "local-alias": "file:../../external/actual" },
+      });
+      await writePackage(repositoryDir, "packages/lib", { name: "lib", version: "1.0.0" });
+      await writePackage(repositoryDir, "external/actual", {
+        name: "actual-package",
+        version: "3.0.0",
+        dependencies: { child: "^2.0.0" },
+      });
+      await writeJson(path.join(repositoryDir, "package-lock.json"), {
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "repository" },
+          "packages/app": { name: "app", version: "1.0.0" },
+          "packages/lib": { name: "lib", version: "1.0.0" },
+          "node_modules/lib": { resolved: "packages/lib", link: true },
+          "packages/app/node_modules/lib": {
+            version: "2.1.0",
+            resolved: "https://r/lib-2.1.0.tgz",
+            integrity: "sha512-lib2",
+          },
+          "node_modules/local-alias": {
+            name: "actual-package",
+            version: "3.0.0",
+            resolved: "file:external/actual",
+            dependencies: { child: "^2.0.0" },
+          },
+          "node_modules/child": { version: "1.0.0" },
+          "node_modules/local-alias/node_modules/child": {
+            version: "2.2.0",
+            resolved: "https://r/child-2.2.0.tgz",
+            integrity: "sha512-child2",
+          },
+        },
+      });
+
+      const deploymentDir = path.join(repositoryDir, "output");
+      const result = await runWsDeploy({
+        repositoryDir,
+        targetWorkspace: "app",
+        deploymentDir,
+        installMode: "none",
+        copyLocalPackages,
+      });
+      const manifest = await readJson<PackageJson>(path.join(deploymentDir, "package.json"));
+
+      assert.deepEqual([...result.closure.localDependencies.keys()], ["local-alias"]);
+      assert.equal(manifest.dependencies?.["lib"], "^2.0.0");
+      assert.equal(
+        manifest.dependencies?.["local-alias"],
+        copyLocalPackages ? "file:./local-packages/local-alias" : "file:../external/actual",
+      );
+      assert.equal(result.lockfile.packages["node_modules/lib"]?.version, "2.1.0");
+      assert.equal(result.lockfile.packages["node_modules/lib"]?.integrity, "sha512-lib2");
+      assert.equal(result.lockfile.packages["node_modules/child"]?.version, "2.2.0");
+      assert.equal(result.lockfile.packages["node_modules/child"]?.integrity, "sha512-child2");
+      assert.equal(
+        result.lockfile.packages[
+          copyLocalPackages ? "local-packages/local-alias" : "node_modules/local-alias"
+        ]?.name,
+        "actual-package",
+      );
+      assert.deepEqual(result.warnings, []);
+    });
+  }
+});

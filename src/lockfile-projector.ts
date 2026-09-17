@@ -2,6 +2,7 @@
 
 import * as path from "node:path";
 
+import { computeLocalReference, rewriteManifest } from "./materializer.js";
 import type {
   ClosureRegistryPackage,
   DependencyMap,
@@ -36,11 +37,11 @@ function placementKey(scope: string, name: string): string {
  * `node_modules`, and conflicting versions are nested under their consumers.
  */
 class RegistryPlacer {
-  /** scope -> (name -> version) placed directly in that scope's node_modules. */
+  /** scope -> (name -> instance key) placed directly in that scope's node_modules. */
   private readonly placed = new Map<string, Map<string, string>>();
   /** placement keys already expanded (guards cycles and duplicate work). */
   private readonly visited = new Set<string>();
-  /** name -> version chosen for the deployment's top-level node_modules. */
+  /** name -> instance key chosen for the deployment's top-level node_modules. */
   private readonly deploymentVersions: Map<string, string>;
 
   constructor(
@@ -48,8 +49,16 @@ class RegistryPlacer {
     private readonly repositoryLockfile: NpmLockfile,
     private readonly packages: Record<string, LockfilePackageEntry>,
     topDemands: RegistryDemand[],
+    private readonly includeOptional: boolean,
+    private readonly deploymentDir: string,
+    private readonly copyLocalPackages: boolean,
   ) {
     this.deploymentVersions = this.computeDeploymentVersions(topDemands);
+    for (const key of Object.keys(packages)) {
+      if (key.startsWith(NODE_MODULES_PREFIX)) {
+        this.scopeMap("").set(key.slice(NODE_MODULES_PREFIX.length), `local:${key}`);
+      }
+    }
   }
 
   /** Place `instanceKey` and its subtree relative to `consumerScope`. */
@@ -58,20 +67,25 @@ class RegistryPlacer {
     if (!node) {
       return;
     }
-    const targetScope = this.chooseScope(consumerScope, node);
+    const targetScope = this.chooseScope(consumerScope, node, instanceKey);
     const scopeMap = this.scopeMap(targetScope);
     const existing = scopeMap.get(node.name);
-    if (existing === node.version) {
+    if (existing === instanceKey) {
       return; // already placed (and expanded) here
     }
     if (existing !== undefined) {
+      if (existing.startsWith("local:")) {
+        throw new Error(
+          `Local and registry dependencies named "${node.name}" both require the deployment root. Use different dependency aliases.`,
+        );
+      }
       // A scope hosts at most one version per name; reaching here is a bug.
       throw new Error(
         `ws-deploy placement conflict: ${node.name}@${existing} vs @${node.version} ` +
           `at "${targetScope || "<deployment>"}".`,
       );
     }
-    scopeMap.set(node.name, node.version);
+    scopeMap.set(node.name, instanceKey);
 
     const key = placementKey(targetScope, node.name);
     if (this.visited.has(key)) {
@@ -81,7 +95,45 @@ class RegistryPlacer {
 
     const source = this.repositoryLockfile.packages[node.lockfileKey];
     if (source) {
-      this.packages[key] = { ...source };
+      const projected = { ...source };
+      if (node.optional) {
+        projected.optional = true;
+      } else {
+        delete projected.optional;
+      }
+      if (source.dependencies && source.optionalDependencies) {
+        projected.dependencies = Object.fromEntries(
+          Object.entries(source.dependencies).filter(
+            ([name]) => source.optionalDependencies?.[name] === undefined,
+          ),
+        );
+      }
+      if (!this.includeOptional) {
+        delete projected.optionalDependencies;
+      }
+      if (node.localTarball) {
+        projected.resolved = computeLocalReference(
+          this.deploymentDir,
+          this.tarballPath(node.localTarball),
+        );
+      }
+      for (const childKey of node.dependencies) {
+        const child = this.graph.get(childKey);
+        if (child?.localTarball) {
+          for (const section of ["dependencies", "optionalDependencies"] as const) {
+            if (projected[section]?.[child.name] !== undefined) {
+              projected[section] = {
+                ...projected[section],
+                [child.name]: computeLocalReference(
+                  path.join(this.deploymentDir, key),
+                  this.tarballPath(child.localTarball),
+                ),
+              };
+            }
+          }
+        }
+      }
+      this.packages[key] = projected;
     }
 
     // A peer must be visible from the dependent package, so place it in the
@@ -103,21 +155,31 @@ class RegistryPlacer {
     return map;
   }
 
+  private tarballPath(tarball: NonNullable<ClosureRegistryPackage["localTarball"]>): string {
+    return this.copyLocalPackages
+      ? path.join(this.deploymentDir, tarball.deploymentRelativePath)
+      : tarball.sourcePath;
+  }
+
   /** Highest scope on `consumerScope`'s path that can host `node`'s version. */
-  private chooseScope(consumerScope: string, node: ClosureRegistryPackage): string {
+  private chooseScope(
+    consumerScope: string,
+    node: ClosureRegistryPackage,
+    instanceKey: string,
+  ): string {
     for (let scope = consumerScope; ; scope = parentScope(scope)) {
       const version = this.placed.get(scope)?.get(node.name);
       if (version !== undefined) {
         // Nearest ancestor already holds this name: reuse it if the version
         // matches, otherwise this version must nest under the consumer.
-        return version === node.version ? scope : consumerScope;
+        return version === instanceKey ? scope : consumerScope;
       }
       if (scope === "") {
         break;
       }
     }
     // Not yet on the path: hoist to the deployment package if it is the most-used version.
-    return this.deploymentVersions.get(node.name) === node.version ? "" : consumerScope;
+    return this.deploymentVersions.get(node.name) === instanceKey ? "" : consumerScope;
   }
 
   /** Choose each top-level deployment version (most-used; direct dependencies win). */
@@ -138,16 +200,16 @@ class RegistryPlacer {
       if (!node) {
         continue;
       }
-      bump(node.name, node.version);
+      bump(node.name, demand.instanceKey);
       if (demand.location === "") {
-        directDeploymentVersions.set(node.name, node.version);
+        directDeploymentVersions.set(node.name, demand.instanceKey);
       }
     }
     for (const node of this.graph.values()) {
       for (const depKey of [...node.dependencies, ...node.peerDependencies]) {
         const dep = this.graph.get(depKey);
         if (dep) {
-          bump(dep.name, dep.version);
+          bump(dep.name, depKey);
         }
       }
     }
@@ -162,7 +224,11 @@ class RegistryPlacer {
       let best: string | undefined;
       let bestCount = -1;
       // Ascending version order makes ties deterministic (NFR1).
-      for (const [version, count] of [...versions].toSorted((a, b) => a[0].localeCompare(b[0]))) {
+      for (const [version, count] of [...versions].toSorted(
+        ([left], [right]) =>
+          this.graph.get(left)!.version.localeCompare(this.graph.get(right)!.version) ||
+          left.localeCompare(right),
+      )) {
         if (count > bestCount) {
           best = version;
           bestCount = count;
@@ -212,6 +278,18 @@ function buildDeploymentEntry(deploymentManifest: PackageJson): LockfilePackageE
   if (peerDependencies) {
     entry.peerDependencies = peerDependencies;
   }
+  for (const field of [
+    "peerDependenciesMeta",
+    "engines",
+    "os",
+    "cpu",
+    "libc",
+    "license",
+  ] as const) {
+    if (deploymentManifest[field] !== undefined) {
+      Object.assign(entry, { [field]: deploymentManifest[field] });
+    }
+  }
   if (typeof deploymentManifest.bin === "string") {
     entry.bin = deploymentManifest.bin;
   } else {
@@ -247,13 +325,46 @@ export function projectLockfile(
 
   // Local dependencies are either staged links or packed directly from their source directories.
   for (const local of closure.localDependencies.values()) {
+    const manifestDir = path.join(
+      deploymentDir,
+      ...(copyLocalPackages
+        ? local.deploymentRelativePath
+        : `${NODE_MODULES_PREFIX}${local.name}`
+      ).split("/"),
+    );
+    const localManifest = rewriteManifest(
+      local.manifest,
+      manifestDir,
+      local.deploymentRelativePath,
+      closure,
+      {
+        includeDev: false,
+        isDeploymentManifest: false,
+        sourceDir: local.sourcePath,
+        localPackageDir: (dependency) =>
+          copyLocalPackages
+            ? path.join(deploymentDir, ...dependency.deploymentRelativePath.split("/"))
+            : dependency.sourcePath,
+        localTarballPath: (tarball) =>
+          copyLocalPackages
+            ? path.join(deploymentDir, tarball.deploymentRelativePath)
+            : tarball.sourcePath,
+      },
+      [],
+    );
+    const localEntry = buildDeploymentEntry(localManifest);
+    if (local.optional) {
+      localEntry.optional = true;
+    }
     if (copyLocalPackages) {
       packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
         resolved: local.deploymentRelativePath,
         link: true,
+        ...(local.optional ? { optional: true } : {}),
       };
       packages[local.deploymentRelativePath] = {
-        name: local.name,
+        ...localEntry,
+        name: local.manifest.name ?? local.name,
         version: local.version,
       };
     } else {
@@ -262,6 +373,8 @@ export function projectLockfile(
         relativeSource = `./${relativeSource}`;
       }
       packages[`${NODE_MODULES_PREFIX}${local.name}`] = {
+        ...localEntry,
+        name: local.manifest.name ?? local.name,
         version: local.version,
         resolved: `file:${relativeSource}`,
       };
@@ -274,6 +387,9 @@ export function projectLockfile(
     repositoryLockfile,
     packages,
     closure.topDemands,
+    closure.includeOptionalDependencies ?? false,
+    deploymentDir,
+    copyLocalPackages,
   );
   // Deployment package demands first, then locals, each in a stable order (NFR1).
   const localInstallScopes = new Map(

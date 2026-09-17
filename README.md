@@ -19,6 +19,8 @@ are left out.
 
 The repository lockfile is the source of truth. If a required runtime dependency is missing from
 it, run `npm install` in the repository directory to refresh the lockfile before using `ws-deploy`.
+When both lockfiles exist, `npm-shrinkwrap.json` takes precedence, matching npm. Both formats
+must have a valid `packages` map and lockfile version 2 or later.
 
 ## Installation
 
@@ -53,6 +55,10 @@ npx ws-deploy \
 
 The deployment folder can then be passed to a container build, hosting platform, or separate
 archiving tool.
+
+The output directory must not overlap a source workspace or local dependency, including through
+symlinks or directory junctions. Paths that could delete or overwrite source packages are rejected
+before output files are changed.
 
 ## Why `ws-deploy`
 
@@ -109,7 +115,7 @@ The target is a package name from a workspace `package.json`, not a filesystem p
 The default and recommended mode for CI/CD. It runs:
 
 ```sh
-npm ci --install-links --ignore-scripts
+npm ci --install-links --ignore-scripts --omit=dev --omit=optional
 ```
 
 `npm ci` requires the projected manifest and lockfile to agree and recreates `node_modules` from
@@ -120,7 +126,7 @@ that lockfile.
 Runs:
 
 ```sh
-npm install --install-links --ignore-scripts --no-audit --no-fund
+npm install --install-links --ignore-scripts --no-audit --no-fund --omit=dev --omit=optional
 ```
 
 This mode is useful for local workflows that need npm's more permissive install behavior.
@@ -140,6 +146,9 @@ Both npm-backed modes disable lifecycle scripts. Packages that require `preinsta
 `postinstall` scripts must be prepared before deployment or handled explicitly by the consuming
 pipeline.
 
+`--include-dev` and `--include-optional` replace the corresponding omission flag with an explicit
+npm inclusion flag, including when `NODE_ENV=production` or npm configuration would omit them.
+
 Use `--npmrc <path>` to run either npm-backed mode with a specific npm configuration file. Relative
 paths are resolved from the current working directory. The file is passed to npm as its user config
 and is not copied into the deployment folder.
@@ -152,7 +161,8 @@ By default, the dependency closure contains:
 - Transitive registry dependencies at the exact versions in the repository lockfile
 - Reachable workspace dependencies
 - Reachable `file:` and `link:` dependencies
-- Resolved peer dependencies required by retained registry packages
+- Local tarball dependencies, including renamed dependency slots
+- Required peers of the target and local packages, and resolved peers of retained registry packages
 
 Dependency policies are applied as follows:
 
@@ -160,12 +170,17 @@ Dependency policies are applied as follows:
   dependencies. The target's development dependencies remain in the deployment manifest;
   development dependencies of copied local packages are not included.
 - `--include-optional` traverses `optionalDependencies` throughout the closure. Missing optional
-  registry packages are omitted with a warning.
-- Peers declared by the target or copied local packages are not separate runtime edges. Resolved
-  peers of retained registry packages are included at the exact versions and placements from the
-  repository lockfile because `npm ci` requires a complete install graph. Missing optional peers are
-  omitted.
+  registry packages and local sources are omitted with a warning. Optional declarations override
+  same-name regular and development declarations. npm evaluates platform restrictions during
+  installation, and legitimately omitted optional packages do not fail deployment validation.
+- Peers are install-graph edges because modern npm requires them for `npm ci`. Required peers of
+  the target and local packages are retained; their optional peers are not auto-added. Resolved
+  registry-package peers retain their locked resolutions, and missing optional peers are omitted.
 - Unrelated workspaces and dependency branches are always excluded.
+
+Workspace name matching is only a classification hint: the lockfile decides whether a version
+request resolves to the workspace or a registry version. Explicit npm aliases, Git specs, and
+remote tarballs stay external even when their dependency name matches a workspace.
 
 Package files are selected with npm's pack-list rules. This respects the package's `files` field,
 `.npmignore` or `.gitignore`, and npm's always-included files while excluding `node_modules`.
@@ -195,9 +210,18 @@ uninstalled deployment must not depend on source paths. Registry packages remain
 dependencies, with their exact `version`, `resolved`, and `integrity` metadata copied from the
 repository lockfile where available.
 
+Local `.tgz` dependencies retain their locked integrity. Their paths are rebased by default;
+copy mode stages the archives under `local-tarballs/`. Local package lock entries retain dependency,
+peer, binary, and platform metadata so recursive installations remain complete. A copied target
+shrinkwrap is removed from the output so it cannot override the projected deployment lockfile.
+
 The generated lockfile may place shared versions in the deployment's top-level `node_modules` and
 conflicting versions under their consumers. Placement is recalculated for the target's dependency
 closure rather than copied from the monorepo's `node_modules` layout.
+Equal names and versions are deduplicated only when their lock metadata and resolved dependency
+graphs agree. Different tarballs or transitive resolutions remain separate instances. Local
+workspace install slots are reserved, so conflicting transitive registry versions nest beneath
+their consumers instead of replacing the workspace.
 
 ## Programmatic API
 
@@ -246,6 +270,10 @@ result.
 - Packaging the deployment folder into `.zip` or `.tgz` is intentionally out of scope.
 - Peer dependency compatibility is not revalidated.
 - A `file:` dependency outside the repository is allowed, but it can reduce reproducibility.
+- Distinct local sources under the same dependency name are rejected; use different dependency
+  aliases. A local and registry package cannot both require the same deployment-root slot.
+- The acceptance suite does not establish support for bundled local packages or arbitrary
+  conflicting peer groups. Git source classification is tested, but live Git installs are not.
 
 ## Contributors
 
@@ -271,3 +299,10 @@ npm run ws-deploy -- --target <workspace-name> --install none
 The main implementation stages live under `src/`: workspace discovery, closure traversal,
 materialization, lockfile projection, installation, and validation. Tests under `tests/` construct
 temporary fixture repositories and must clean up all owned files and directories.
+
+The [scenario coverage matrix](SPEC.md#14-scenario-coverage) distinguishes structural tests from
+actual npm installation tests. Source coverage can be measured with Node's built-in runner:
+
+```sh
+node --test --experimental-test-coverage --test-coverage-include="src/**/*.ts" --import tsx "tests/**/*.test.ts"
+```

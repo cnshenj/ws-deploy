@@ -42,6 +42,8 @@ The tool must avoid these incorrect behaviors:
 ### 3.1 Source of truth
 
 The **repository `package-lock.json`** is the source of truth for exact versions and resolved dependency metadata.
+If the repository also contains `npm-shrinkwrap.json`, the shrinkwrap takes precedence, matching
+npm. Both inputs must use lockfile version 2 or later and contain a valid `packages` map.
 
 ### 3.2 No re-resolution
 
@@ -188,6 +190,10 @@ The tool must detect dependencies that resolve to workspace packages using any o
 - `workspace:^`
 - `workspace:~`
 
+Name matching is a classification hint, not permission to override a locked registry resolution.
+An incompatible workspace version can resolve to a registry entry in the repository lockfile.
+Explicit npm aliases, Git specs, and remote tarballs remain external even with matching names.
+
 For each reachable workspace dependency:
 
 1. include it in the closure
@@ -215,6 +221,11 @@ For each file dependency:
 
 File dependencies should be treated similarly to workspace dependencies, except their source is path-based rather than workspace graph based.
 
+Dependency keys are installation names, even when the local manifest declares a different name.
+Children of packed file packages resolve from their installed repository lockfile location.
+Local tarballs are retained as locked archive instances, not read as package directories. Their
+references are rebased, or their bytes are copied under `local-tarballs/` in copy mode.
+
 ---
 
 ## FR6. Build the runtime dependency closure
@@ -223,11 +234,17 @@ Starting from the target workspace, the tool recursively traverses only runtime 
 (see §4.2): `dependencies`, plus `optionalDependencies` when `includeOptionalDependencies`
 is set, plus `devDependencies` of the target only when `includeDevDependencies` is set.
 
-Resolved peer dependencies of retained registry packages are traversed as install-graph edges.
+Required peers of the target and local packages, and resolved peers of retained registry packages,
+are traversed as install-graph edges.
 Although peers are not runtime import edges, npm installs them by default and `npm ci` requires
 their entries in the projected lockfile. Peers use the exact resolution from the repository lockfile and
 are placed beside the package that declares them. Missing optional peers are omitted. ws-deploy
 does not separately re-validate peer compatibility.
+
+Optional declarations override regular and dev declarations of the same name. The selected
+policy is reflected in emitted manifests and lock metadata, not only in traversal. Missing
+optional local sources are omitted with warnings. Traversal must not mutate the input workspace
+graph, and an optional subtree reached later through a required edge must be rechecked as required.
 
 The closure must include:
 
@@ -253,6 +270,10 @@ If the repository lockfile says:
 the deployment lockfile must preserve both exact versions as separate resolution entries if needed.
 
 The tool must not resolve `^4.0.0` again from the registry.
+
+Identical names and versions do not imply identical package instances. Distinct resolved sources,
+integrities, or resolved child graphs must be retained. Deduplication requires equivalent metadata
+and dependency graphs, including cyclic graphs.
 
 ---
 
@@ -324,6 +345,8 @@ The output must not include unrelated workspaces or dependencies.
 ## NFR4. Safety
 
 The tool must never modify the source monorepo files in place.
+Output/source overlaps, including resolved symlinks and junctions, must be rejected before any
+deletion or copying. This protects unrelated workspace sources as well as retained local sources.
 
 ## NFR5. Extensibility
 
@@ -343,7 +366,7 @@ Each module maps to one internal interface:
 | Closure Resolver        | Traverse runtime edges from the target, collect local + registry packages                           | `computeRuntimeClosure(graph, lockfile, target, options)`               |
 | Lockfile Projector      | Extract the reachable subgraph, preserve exact versions, apply placement (§8.1), rewrite local refs | `projectLockfile(repositoryLockfile, closure, deploymentManifest)`      |
 | Deployment Materializer | Copy target, optionally stage local deps, and rewrite local references                                | `materialize(closure, repositoryManifest, options)`                     |
-| Installer Adapter       | Run the chosen PM with the filtered lockfile and optional npm config                                | `getInstaller().install(deploymentDir, mode, npmrc?)`                   |
+| Installer Adapter       | Run the chosen PM with the filtered lockfile, npm config, and inclusion policies                    | `getInstaller().install(deploymentDir, mode, npmrc?, policies?)`         |
 | Validator               | Check the deployment folder is complete and installable                                             | `validateDeployment(deploymentDir, closure, options)`                   |
 
 ---
@@ -402,6 +425,11 @@ This produces a deterministic, npm-compatible layout: the most-used (or directly
 is shared in the deployment's top-level `node_modules`, and every conflicting minority version is
 nested under exactly the consumers that demand it.
 
+Placement compares exact instance identities, not just version strings. Version order remains the
+primary tie-breaker, followed by the instance key. Existing local install slots are reserved;
+transitive registry conflicts must nest instead of overwriting them. A local and registry package
+that both require the deployment-root slot produce a diagnostic rather than silent replacement.
+
 ---
 
 # 9. Data Model
@@ -443,28 +471,33 @@ The closure is not a flat inventory; it is a `RuntimeClosure`:
 ```text
 RuntimeClosure {
   target: WorkspaceNode
+  includeOptionalDependencies: boolean
   localDependencies: Map<name, DeployLocalDependency>   // workspace/file deps to install or stage
-  registryPackages: Map<"name@version", ClosureRegistryPackage>
+  localResolutions: Map<sourcePath, Map<dependencyName, localName>>
+  registryPackages: Map<instanceKey, ClosureRegistryPackage>
   topDemands: RegistryDemand[]   // { location, instanceKey } direct registry demands
   warnings: string[]
 }
 
 DeployLocalDependency {
   name; sourceType: "workspace" | "file"; sourcePath; version; manifest
+  optional?: boolean
   deploymentRelativePath   // e.g. "local-packages/lib"
   deploymentReference      // e.g. "file:./local-packages/lib"
 }
 
 ClosureRegistryPackage {
   name; version; lockfileKey
-  dependencies: string[]       // "name@version" instance keys
+  optional?: boolean
+  localTarball?: { sourcePath; deploymentRelativePath }
+  dependencies: string[]       // opaque instance keys; context suffixes distinguish same versions
   peerDependencies: string[]   // resolved peers placed beside the dependent package
 }
 ```
 
 ## 9.4 Filtered lockfile
 
-An npm lockfile v3 document (`lockfileVersion` copied from the repository lockfile when ≥ 2, else 3):
+An npm lockfile document with `lockfileVersion` copied from the validated repository lockfile:
 
 ```text
 FilteredLockfile {
@@ -477,6 +510,8 @@ Local deps appear as regular `file:` entries by default, or as a `link` entry pl
 when `copyLocalPackages` is enabled; registry packages carry exact
 `version`/`resolved`/`integrity` copied from the repository lockfile. The legacy top-level
 `dependencies` map (lockfile v1) is not emitted.
+Local package entries also include rewritten dependency relationships and npm runtime metadata.
+Any target shrinkwrap copied into the output is removed so the projected lockfile is authoritative.
 
 ---
 
@@ -497,14 +532,16 @@ If `foo` depends on `file:../lib` and `lib` depends on `file:../shared`, the too
 
 ## EC4. Peer dependencies
 
-Resolved peers of retained registry packages are traversed and placed beside their dependents so
+Required target/local peers and resolved registry-package peers are traversed so
 the filtered lockfile remains valid for `npm ci` (FR6). Missing optional peers are omitted. Peer
 compatibility is not separately re-validated; explicit peer-conflict validation remains a possible
 future feature.
 
 ## EC5. Optional dependencies
 
-Optional dependencies should be included only if the deployment target platform requires them or if the policy says to include them.
+Optional dependencies are traversed when explicitly enabled. npm applies `os`, `cpu`, and related
+platform restrictions at install time. Missing optional installations are permitted by validation;
+the same package reached through a required edge is not optional.
 
 ## EC6. Build-only outputs
 
@@ -520,11 +557,13 @@ If a package requires build output to execute, the deployment process must inclu
 - a workspace dependency does not resolve to a known workspace package
 - a `file:` dependency has no `package.json` at the resolved path
 - repository lockfile missing, or has no `packages` map
+- output directory overlaps a source package
+- distinct local sources use the same dependency name (use distinct aliases)
 - **a required runtime dependency is reachable but has no entry in the repository lockfile** — the
   lockfile is out of sync with the manifests; omitting it would ship a broken artifact (§3.1)
 - a placement invariant is violated (two versions demanded for one scope)
-- deployment validation fails (missing deployment manifest, a requested but un-materialized local dep, or — after
-  install — a local dep missing from `node_modules`)
+- deployment validation fails (missing deployment manifest, an un-materialized local package,
+  a missing required installation, or a registry version differing from the projected lockfile)
 - the installer exits non-zero
 
 Messages should name the dependency, the offending path or parent package, and the reason.
@@ -533,6 +572,7 @@ Messages should name the dependency, the offending path or parent package, and t
 
 - an **optional** dependency is not found in the repository lockfile → omitted (legitimate for
   platform-specific optionals)
+- an optional workspace, directory, or local tarball source is unavailable
 - a manifest entry references a workspace/`file:` package outside the closure → dropped from
   the rewritten manifest
 
@@ -588,6 +628,33 @@ Build in dependency order, because projection and materialization need an accura
 4. Lockfile projection (including placement, §8.1).
 5. Deployment install.
 6. Validation of the deployment folder.
+
+# 14. Scenario Coverage
+
+The suite uses temporary repositories and, for npm acceptance tests, isolated loopback tarball
+servers. Structural tests do not substitute for npm installability checks.
+
+| Scenario | Verification |
+| --- | --- |
+| Workspace protocols, nested/scoped workspaces, recursive file dependencies | Closure and deployment integration tests; recursive npm ci in both copy modes |
+| Same-name external specs and registry fallback for workspace versions | Classifier tests and locked deployment integration tests |
+| Local dependency aliases and packed-file child resolution | Deployment integration and real npm ci in both copy modes |
+| Local tarballs, copied archives, exact integrity, disabled lifecycle scripts | Real npm ci and npm install in both copy modes |
+| Required target/local/registry peers and optional peer omission | Closure tests and real npm ci, including NODE_ENV=production |
+| Optional precedence, graph reuse, required promotion, missing local sources | Closure and deployment integration tests |
+| Platform-incompatible optional registry and local packages | Real npm ci, including copy and source-reference modes |
+| Hoisting, direct-version priority, ties, cycles, same-version context differences | Lockfile projection tests; multiple-version npm ci acceptance |
+| Local/registry slot collisions and ambiguous local-source identities | Projection and deployment rejection tests |
+| Shrinkwrap precedence, lockfile v2, malformed/missing inputs | Lockfile integration tests |
+| Output overlaps, directory links, keep-existing output | Deployment safety tests with source-preservation assertions |
+| files, nested .npmignore, runtime assets, bin, source shrinkwrap | Package-content integration tests |
+| Missing/wrong-version installed registry packages and optional omission | Post-install validation tests |
+| npmrc propagation and explicit inclusion overriding environment defaults | CLI npm acceptance tests |
+
+These tests do not establish complete npm feature parity. Bundled local packages, live Git
+installation, and arbitrary conflicting peer groups remain outside the acceptance matrix.
+Distinct local sources sharing one dependency name, and conflicting local/registry root slots,
+are explicitly rejected rather than silently collapsed.
 
 The overriding rule is stated in §3.3: project the reachable subgraph into a new lockfile —
 never path-substitute repository lockfile entries. That is what makes workspace deps, file deps,

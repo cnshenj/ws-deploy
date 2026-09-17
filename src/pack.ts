@@ -44,6 +44,7 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
     includeDevDependencies: options.includeDevDependencies,
     copyLocalPackages: options.copyLocalPackages,
     keepExistingDeploymentDir: options.keepExistingDeploymentDir,
+    sourceDirectories: [...graph.nodes.values()].map((node) => node.path),
   });
   warnings.push(...materialized.warnings);
 
@@ -57,13 +58,22 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
   // Step 8: install in the deployment directory.
   if (installMode !== "none") {
     const installer = getInstaller();
-    await installer.install(path.resolve(options.deploymentDir), installMode);
+    await installer.install(
+      path.resolve(options.deploymentDir),
+      installMode,
+      options.npmrc === undefined ? undefined : path.resolve(options.npmrc),
+      {
+        includeDevDependencies: options.includeDevDependencies,
+        includeOptionalDependencies: options.includeOptionalDependencies,
+      },
+    );
   }
 
   // Step 9: validate.
   const validation = await validateDeployment(path.resolve(options.deploymentDir), closure, {
     installed: installMode !== "none",
     copyLocalPackages: options.copyLocalPackages,
+    lockfile,
   });
   if (!validation.ok) {
     throw new Error(`Deployment validation failed:\n  - ${validation.errors.join("\n  - ")}`);

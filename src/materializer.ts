@@ -1,9 +1,24 @@
 /** Materializes the deployment tree: copy target files, optionally stage locals, rewrite manifests. */
 
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import type { PackageJson, DeployOptions, RuntimeClosure, DeployLocalDependency } from "./types.js";
-import { copyPackageDir, isDirectory, removeDir, writeJson } from "./filesystem.js";
+import npa from "npm-package-arg";
+
+import type {
+  PackageJson,
+  DeployOptions,
+  RuntimeClosure,
+  DeployLocalDependency,
+  ClosureRegistryPackage,
+} from "./types.js";
+import {
+  assertSafeDeploymentDirectory,
+  copyPackageDir,
+  isDirectory,
+  removeDir,
+  writeJson,
+} from "./filesystem.js";
 
 export interface MaterializeResult {
   /** The rewritten deployment package manifest. */
@@ -19,14 +34,14 @@ function deploymentSubPath(name: string): string {
 }
 
 /** Compute a portable `file:` reference between two absolute package directories. */
-function computeLocalReference(manifestDir: string, dependencyDir: string): string {
+export function computeLocalReference(manifestDir: string, dependencyDir: string): string {
   const rel = path.relative(manifestDir, dependencyDir).replace(/\\/g, "/");
   const normalized = path.isAbsolute(rel) || rel.startsWith(".") ? rel : `./${rel}`;
   return `file:${normalized}`;
 }
 
 /** Rewrite a manifest so local deps point at source or deployment-local `file:` paths. */
-function rewriteManifest(
+export function rewriteManifest(
   manifest: PackageJson,
   manifestDir: string,
   manifestLabel: string,
@@ -34,11 +49,17 @@ function rewriteManifest(
   options: {
     includeDev: boolean;
     isDeploymentManifest: boolean;
+    sourceDir: string;
     localPackageDir: (local: DeployLocalDependency) => string;
+    localTarballPath: (tarball: NonNullable<ClosureRegistryPackage["localTarball"]>) => string;
   },
   warnings: string[],
 ): PackageJson {
   const rewritten: PackageJson = { ...manifest };
+  const localTarballs = [...closure.registryPackages.values()].flatMap((node) =>
+    node.localTarball ? [node.localTarball] : [],
+  );
+  const registryNames = new Set([...closure.registryPackages.values()].map((node) => node.name));
 
   // The standalone deployment package must not retain workspace configuration.
   delete rewritten.workspaces;
@@ -51,17 +72,44 @@ function rewriteManifest(
     sections.push("devDependencies");
   }
   for (const section of sections) {
+    if (section === "optionalDependencies" && !closure.includeOptionalDependencies) {
+      delete rewritten.optionalDependencies;
+      continue;
+    }
     const original = manifest[section];
     if (!original) {
       continue;
     }
     const next: Record<string, string> = {};
     for (const [name, spec] of Object.entries(original)) {
-      const local = closure.localDependencies.get(name);
+      if (
+        (section !== "optionalDependencies" &&
+          manifest.optionalDependencies?.[name] !== undefined) ||
+        (section === "devDependencies" && manifest.dependencies?.[name] !== undefined)
+      ) {
+        continue;
+      }
+      const localName = closure.localResolutions
+        ? closure.localResolutions.get(options.sourceDir)?.get(name)
+        : name;
+      const local = localName === undefined ? undefined : closure.localDependencies.get(localName);
+      const archive =
+        spec !== undefined && !spec.startsWith("workspace:")
+          ? localTarballs.find(
+              (tarball) =>
+                tarball.sourcePath ===
+                npa.resolve(name, spec.replace(/^link:/, "file:"), options.sourceDir).fetchSpec,
+            )
+          : undefined;
+      if (section === "optionalDependencies" && !local && !archive && !registryNames.has(name)) {
+        continue;
+      }
       if (local) {
         next[name] = computeLocalReference(manifestDir, options.localPackageDir(local));
       } else if (spec === undefined) {
         continue;
+      } else if (archive) {
+        next[name] = computeLocalReference(manifestDir, options.localTarballPath(archive));
       } else if (WORKSPACE_OR_FILE.test(spec)) {
         warnings.push(
           `Dropped unresolved ${section} entry "${name}": "${spec}" ` +
@@ -97,11 +145,20 @@ export async function materialize(
   options: Pick<
     DeployOptions,
     "deploymentDir" | "includeDevDependencies" | "copyLocalPackages" | "keepExistingDeploymentDir"
-  >,
+  > & { sourceDirectories?: string[] },
 ): Promise<MaterializeResult> {
   const deploymentDir = path.resolve(options.deploymentDir);
   const copyLocalPackages = options.copyLocalPackages ?? false;
   const warnings: string[] = [];
+
+  await assertSafeDeploymentDirectory(deploymentDir, [
+    closure.target.path,
+    ...[...closure.localDependencies.values()].map((local) => local.sourcePath),
+    ...[...closure.registryPackages.values()].flatMap((node) =>
+      node.localTarball ? [node.localTarball.sourcePath] : [],
+    ),
+    ...(options.sourceDirectories ?? []),
+  ]);
 
   if (!options.keepExistingDeploymentDir && (await isDirectory(deploymentDir))) {
     await removeDir(deploymentDir);
@@ -109,8 +166,21 @@ export async function materialize(
 
   // Copy the target workspace into the deployment directory.
   await copyPackageDir(closure.target.path, deploymentDir, closure.target.manifest);
+  await fs.rm(path.join(deploymentDir, "npm-shrinkwrap.json"), { force: true });
+
+  const localTarballPath = (tarball: NonNullable<ClosureRegistryPackage["localTarball"]>): string =>
+    copyLocalPackages
+      ? path.join(deploymentDir, tarball.deploymentRelativePath)
+      : tarball.sourcePath;
 
   if (copyLocalPackages) {
+    for (const node of closure.registryPackages.values()) {
+      if (node.localTarball) {
+        const destination = localTarballPath(node.localTarball);
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.copyFile(node.localTarball.sourcePath, destination);
+      }
+    }
     for (const local of closure.localDependencies.values()) {
       const dest = path.join(deploymentDir, ...local.deploymentRelativePath.split("/"));
       await copyLocalDependency(local, dest);
@@ -131,7 +201,9 @@ export async function materialize(
     {
       includeDev: options.includeDevDependencies ?? false,
       isDeploymentManifest: true,
+      sourceDir: closure.target.path,
       localPackageDir,
+      localTarballPath,
     },
     warnings,
   );
@@ -151,7 +223,13 @@ export async function materialize(
         manifestDir,
         local.deploymentRelativePath,
         closure,
-        { includeDev: false, isDeploymentManifest: false, localPackageDir },
+        {
+          includeDev: false,
+          isDeploymentManifest: false,
+          sourceDir: local.sourcePath,
+          localPackageDir,
+          localTarballPath,
+        },
         warnings,
       );
       await writeJson(path.join(manifestDir, "package.json"), rewritten);

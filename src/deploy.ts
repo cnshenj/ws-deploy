@@ -44,6 +44,7 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
     includeDevDependencies: options.includeDevDependencies,
     copyLocalPackages: options.copyLocalPackages,
     keepExistingDeploymentDir: options.keepExistingDeploymentDir,
+    sourceDirectories: [...graph.nodes.values()].map((node) => node.path),
   });
   warnings.push(...materialized.warnings);
 
@@ -61,6 +62,10 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
       path.resolve(options.deploymentDir),
       installMode,
       options.npmrc === undefined ? undefined : path.resolve(options.npmrc),
+      {
+        includeDevDependencies: options.includeDevDependencies,
+        includeOptionalDependencies: options.includeOptionalDependencies,
+      },
     );
   }
 
@@ -68,6 +73,7 @@ export async function runWsDeploy(options: DeployOptions): Promise<DeployResult>
   const validation = await validateDeployment(path.resolve(options.deploymentDir), closure, {
     installed: installMode !== "none",
     copyLocalPackages: options.copyLocalPackages,
+    lockfile,
   });
   if (!validation.ok) {
     throw new Error(`Deployment validation failed:\n  - ${validation.errors.join("\n  - ")}`);

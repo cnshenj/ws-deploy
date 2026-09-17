@@ -11,6 +11,7 @@ import { runWsDeploy } from "../src/deploy.js";
 import { projectLockfile } from "../src/lockfile-projector.js";
 import { materialize } from "../src/materializer.js";
 import type { NpmLockfile, PackageJson } from "../src/types.js";
+import { validateDeployment } from "../src/validate.js";
 import { buildFixtureRepository, cleanupFixture } from "./fixture.js";
 
 async function readJson<T>(file: string): Promise<T> {
@@ -143,5 +144,206 @@ describe("runWsDeploy (installMode none)", () => {
       resolved: "local-packages/lib",
       link: true,
     });
+  });
+
+  it("keeps existing deployment files only when requested", async () => {
+    const sentinel = path.join(deploymentDir, "existing.txt");
+    await fs.writeFile(sentinel, "keep me", "utf8");
+    await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "foo",
+      deploymentDir,
+      installMode: "none",
+      keepExistingDeploymentDir: true,
+    });
+    assert.equal(await fs.readFile(sentinel, "utf8"), "keep me");
+
+    await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "foo",
+      deploymentDir,
+      installMode: "none",
+    });
+    await assert.rejects(fs.access(sentinel), { code: "ENOENT" });
+  });
+});
+
+describe("deployment output safety", () => {
+  it("rejects source overlaps before changing any source files", async (context) => {
+    const repositoryDir = await buildFixtureRepository();
+    context.after(() => cleanupFixture(repositoryDir));
+    const sourceManifest = path.join(repositoryDir, "packages/foo/package.json");
+    const original = await fs.readFile(sourceManifest, "utf8");
+
+    for (const relative of [
+      ".",
+      "packages",
+      "packages/foo",
+      "packages/foo/output",
+      "packages/bar",
+      "shared",
+      "shared/output",
+    ]) {
+      for (const keepExistingDeploymentDir of [false, true]) {
+        await assert.rejects(
+          runWsDeploy({
+            repositoryDir,
+            targetWorkspace: "foo",
+            deploymentDir: path.join(repositoryDir, relative),
+            installMode: "none",
+            keepExistingDeploymentDir,
+          }),
+          /overlaps source package/,
+        );
+        assert.equal(await fs.readFile(sourceManifest, "utf8"), original);
+      }
+    }
+  });
+
+  it("rejects output paths that reach source packages through a directory link", async (context) => {
+    const repositoryDir = await buildFixtureRepository();
+    context.after(() => cleanupFixture(repositoryDir));
+    const sourceDir = path.join(repositoryDir, "packages/foo");
+    const aliasDir = path.join(repositoryDir, "source-alias");
+    await fs.symlink(sourceDir, aliasDir, "junction");
+
+    await assert.rejects(
+      runWsDeploy({
+        repositoryDir,
+        targetWorkspace: "foo",
+        deploymentDir: path.join(aliasDir, "output"),
+        installMode: "none",
+      }),
+      /overlaps source package/,
+    );
+    await fs.access(path.join(sourceDir, "package.json"));
+    await assert.rejects(fs.access(path.join(sourceDir, "output")), { code: "ENOENT" });
+  });
+});
+
+describe("deployment install validation", () => {
+  it("detects missing and wrong-version registry packages but permits omitted optionals", async (context) => {
+    const repositoryDir = await buildFixtureRepository();
+    context.after(() => cleanupFixture(repositoryDir));
+    const deploymentDir = path.join(repositoryDir, "deployment");
+    const result = await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "foo",
+      deploymentDir,
+      installMode: "none",
+    });
+    const missing = await validateDeployment(deploymentDir, result.closure, {
+      installed: true,
+      lockfile: result.lockfile,
+    });
+    assert.equal(missing.ok, false);
+    assert.ok(
+      missing.errors.some((error) => error.includes('Registry dependency "somelib" is missing')),
+    );
+
+    for (const [key, entry] of Object.entries(result.lockfile.packages)) {
+      if (key.startsWith("node_modules/")) {
+        const packageDir = path.join(deploymentDir, key);
+        await fs.mkdir(packageDir, { recursive: true });
+        await fs.writeFile(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({ version: entry.version }),
+          "utf8",
+        );
+      }
+    }
+    result.lockfile.packages["node_modules/platform-optional"] = {
+      version: "1.0.0",
+      optional: true,
+    };
+    const complete = await validateDeployment(deploymentDir, result.closure, {
+      installed: true,
+      lockfile: result.lockfile,
+    });
+    assert.deepEqual(complete, { ok: true, errors: [] });
+
+    await fs.writeFile(
+      path.join(deploymentDir, "node_modules/somelib/package.json"),
+      JSON.stringify({ version: "9.0.0" }),
+      "utf8",
+    );
+    const incorrect = await validateDeployment(deploymentDir, result.closure, {
+      installed: true,
+      lockfile: result.lockfile,
+    });
+    assert.equal(incorrect.ok, false);
+    assert.deepEqual(incorrect.errors, [
+      'Registry dependency "somelib" at node_modules/somelib has version "9.0.0" instead of locked version "1.2.0".',
+    ]);
+  });
+});
+
+describe("deployment package contents", () => {
+  it("honors npm file selection and removes copied shrinkwrap precedence", async (context) => {
+    const repositoryDir = await buildFixtureRepository();
+    context.after(() => cleanupFixture(repositoryDir));
+    const sourceDir = path.join(repositoryDir, "packages/foo");
+    const manifestPath = path.join(sourceDir, "package.json");
+    const manifest = await readJson<PackageJson>(manifestPath);
+    manifest.files = ["dist", "assets"];
+    manifest.main = "dist/index.js";
+    manifest.bin = { foo: "dist/cli.js" };
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+    for (const [relative, contents] of Object.entries({
+      "dist/index.js": "export default 1;\n",
+      "dist/cli.js": "#!/usr/bin/env node\n",
+      "dist/hidden.map": "ignored source map",
+      "dist/.npmignore": "*.map\n",
+      "assets/settings.json": "{}",
+      "README.md": "Runtime package",
+      LICENSE: "Fixture license",
+      "src/internal.ts": "export const internal = true;",
+      "node_modules/unrelated/index.js": "module.exports = 1;",
+      ".npmrc": "audit=false\n",
+      "npm-shrinkwrap.json": JSON.stringify({ lockfileVersion: 3, packages: {} }),
+    })) {
+      const file = path.join(sourceDir, relative);
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, contents, "utf8");
+    }
+    const deploymentDir = path.join(repositoryDir, "deployment");
+    await fs.mkdir(deploymentDir);
+    await fs.copyFile(
+      path.join(sourceDir, "npm-shrinkwrap.json"),
+      path.join(deploymentDir, "npm-shrinkwrap.json"),
+    );
+
+    const result = await runWsDeploy({
+      repositoryDir,
+      targetWorkspace: "foo",
+      deploymentDir,
+      installMode: "none",
+      keepExistingDeploymentDir: true,
+    });
+
+    for (const relative of [
+      "dist/index.js",
+      "dist/cli.js",
+      "assets/settings.json",
+      "README.md",
+      "LICENSE",
+    ]) {
+      assert.equal(
+        await fs.readFile(path.join(deploymentDir, relative), "utf8"),
+        await fs.readFile(path.join(sourceDir, relative), "utf8"),
+      );
+    }
+    for (const relative of [
+      "src/internal.ts",
+      "dist/hidden.map",
+      ".npmrc",
+      "node_modules/unrelated",
+      "npm-shrinkwrap.json",
+    ]) {
+      await assert.rejects(fs.access(path.join(deploymentDir, relative)), { code: "ENOENT" });
+    }
+    assert.deepEqual(result.lockfile.packages[""]?.bin, { foo: "dist/cli.js" });
+    await fs.access(path.join(sourceDir, "npm-shrinkwrap.json"));
+    await fs.access(path.join(deploymentDir, "package-lock.json"));
   });
 });

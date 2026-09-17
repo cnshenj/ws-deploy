@@ -2,8 +2,8 @@
 
 import * as path from "node:path";
 
-import type { RuntimeClosure } from "./types.js";
-import { pathExists } from "./filesystem.js";
+import type { NpmLockfile, RuntimeClosure } from "./types.js";
+import { pathExists, readManifest } from "./filesystem.js";
 
 export interface ValidationResult {
   ok: boolean;
@@ -20,7 +20,7 @@ export interface ValidationResult {
 export async function validateDeployment(
   deploymentDir: string,
   closure: RuntimeClosure,
-  options: { installed: boolean; copyLocalPackages?: boolean },
+  options: { installed: boolean; copyLocalPackages?: boolean; lockfile?: NpmLockfile },
 ): Promise<ValidationResult> {
   const errors: string[] = [];
   const resolvedDeploymentDir = path.resolve(deploymentDir);
@@ -44,9 +44,35 @@ export async function validateDeployment(
     // Direct runtime local deps should resolve inside node_modules.
     for (const local of closure.localDependencies.values()) {
       const linkPath = path.join(resolvedDeploymentDir, "node_modules", ...local.name.split("/"));
-      if (!(await pathExists(linkPath))) {
+      if (!local.optional && !(await pathExists(path.join(linkPath, "package.json")))) {
         errors.push(
           `Local dependency "${local.name}" is not present under node_modules after install.`,
+        );
+      }
+    }
+    for (const [key, entry] of Object.entries(options.lockfile?.packages ?? {})) {
+      if (
+        (!key.startsWith("node_modules/") && !key.includes("/node_modules/")) ||
+        entry.link ||
+        entry.optional
+      ) {
+        continue;
+      }
+      const name = key.slice(key.lastIndexOf("node_modules/") + "node_modules/".length);
+      if (closure.localDependencies.has(name) && key === `node_modules/${name}`) {
+        continue;
+      }
+      const manifestPath = path.join(resolvedDeploymentDir, key, "package.json");
+      try {
+        const manifest = await readManifest(manifestPath);
+        if (entry.version !== undefined && manifest.version !== entry.version) {
+          errors.push(
+            `Registry dependency "${name}" at ${key} has version "${manifest.version}" instead of locked version "${entry.version}".`,
+          );
+        }
+      } catch {
+        errors.push(
+          `Registry dependency "${name}" is missing or has an invalid package.json at ${key} after install.`,
         );
       }
     }

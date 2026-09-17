@@ -29,10 +29,7 @@ async function buildRepository(
 }
 
 async function deploy(repositoryDir: string, target: string): Promise<NpmLockfile> {
-  const deploymentDir = path.join(
-    await fs.mkdtemp(path.join(os.tmpdir(), "ws-deploy-hoist-")),
-    "out",
-  );
+  const deploymentDir = path.join(repositoryDir, "deployment");
   const result = await runWsDeploy({
     repositoryDir,
     targetWorkspace: target,
@@ -408,14 +405,14 @@ describe("projectLockfile hoisting", () => {
           },
           "packages/p2/node_modules/x": {
             version: "1.0.0",
-            resolved: "https://r/x-context-two.tgz",
-            integrity: "sha512-context-two",
+            resolved: "https://r/x-context-one.tgz",
+            integrity: "sha512-context-one",
             dependencies: { y: "*" },
           },
           "packages/p2/node_modules/x/node_modules/y": {
-            version: "2.0.0",
-            resolved: "https://r/y-2.0.0.tgz",
-            integrity: "sha512-y2",
+            version: "1.0.0",
+            resolved: "https://r/y-1.0.0.tgz",
+            integrity: "sha512-y1",
           },
         },
       },
@@ -429,5 +426,108 @@ describe("projectLockfile hoisting", () => {
     assert.equal(lockfile.packages["node_modules/y"]?.version, "1.0.0");
     assert.equal(lockfile.packages["local-packages/p2/node_modules/x"], undefined);
     assert.equal(lockfile.packages["node_modules/y"]?.resolved, "https://r/y-1.0.0.tgz");
+  });
+
+  for (const differentTarball of [false, true]) {
+    it(`preserves distinct same-version dependency contexts (different tarball=${differentTarball})`, async () => {
+      const secondSource = differentTarball
+        ? "https://r/library-fork.tgz"
+        : "https://r/library.tgz";
+      const repositoryDir = await buildRepository(
+        {
+          ".": { name: "repository", private: true, workspaces: ["packages/*"] },
+          "packages/app": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { first: "workspace:*", second: "workspace:*" },
+          },
+          "packages/first": { name: "first", version: "1.0.0", dependencies: { library: "*" } },
+          "packages/second": { name: "second", version: "1.0.0", dependencies: { library: "*" } },
+        },
+        {
+          lockfileVersion: 3,
+          packages: {
+            "": { name: "repository" },
+            "packages/first/node_modules/library": {
+              version: "1.0.0",
+              resolved: "https://r/library.tgz",
+              integrity: "sha512-library",
+              dependencies: { child: "*" },
+            },
+            "packages/second/node_modules/library": {
+              version: "1.0.0",
+              resolved: secondSource,
+              integrity: differentTarball ? "sha512-fork" : "sha512-library",
+              dependencies: { child: "*" },
+            },
+            "packages/first/node_modules/library/node_modules/child": {
+              version: "1.0.0",
+              resolved: "https://r/child-1.tgz",
+            },
+            "packages/second/node_modules/library/node_modules/child": {
+              version: "2.0.0",
+              resolved: "https://r/child-2.tgz",
+            },
+          },
+        },
+      );
+      cleanups.push(repositoryDir);
+
+      const lockfile = await deploy(repositoryDir, "app");
+
+      assert.equal(lockfile.packages["node_modules/library"]?.resolved, "https://r/library.tgz");
+      assert.equal(
+        lockfile.packages["local-packages/second/node_modules/library"]?.resolved,
+        secondSource,
+      );
+      assert.equal(
+        lockfile.packages["local-packages/second/node_modules/library"]?.integrity,
+        differentTarball ? "sha512-fork" : "sha512-library",
+      );
+      assert.equal(lockfile.packages["node_modules/child"]?.version, "1.0.0");
+      assert.equal(
+        lockfile.packages["local-packages/second/node_modules/library/node_modules/child"]?.version,
+        "2.0.0",
+      );
+    });
+  }
+
+  it("nests registry packages that share a name with a retained local workspace", async () => {
+    const repositoryDir = await buildRepository(
+      {
+        ".": { name: "repository", private: true, workspaces: ["packages/*"] },
+        "packages/app": {
+          name: "app",
+          version: "1.0.0",
+          dependencies: { lib: "workspace:*", consumer: "*" },
+        },
+        "packages/lib": { name: "lib", version: "1.0.0" },
+      },
+      {
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "repository" },
+          "node_modules/lib": { resolved: "packages/lib", link: true },
+          "node_modules/consumer": { version: "1.0.0", dependencies: { lib: "^2.0.0" } },
+          "node_modules/consumer/node_modules/lib": {
+            version: "2.1.0",
+            resolved: "https://r/lib-2.1.tgz",
+          },
+        },
+      },
+    );
+    cleanups.push(repositoryDir);
+
+    const lockfile = await deploy(repositoryDir, "app");
+
+    assert.deepEqual(lockfile.packages["node_modules/lib"], {
+      resolved: "local-packages/lib",
+      link: true,
+    });
+    assert.equal(lockfile.packages["node_modules/consumer/node_modules/lib"]?.version, "2.1.0");
+    assert.equal(
+      lockfile.packages["node_modules/consumer/node_modules/lib"]?.resolved,
+      "https://r/lib-2.1.tgz",
+    );
   });
 });

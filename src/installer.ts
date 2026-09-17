@@ -2,12 +2,22 @@
 
 import { execa } from "execa";
 
-import type { InstallMode } from "./types.js";
+import type { DeployOptions, InstallMode } from "./types.js";
+
+type InstallPolicies = Pick<
+  DeployOptions,
+  "includeDevDependencies" | "includeOptionalDependencies"
+>;
 
 /** A pluggable package-manager backend. */
 export interface InstallerAdapter {
   readonly name: string;
-  install(deploymentDir: string, mode: InstallMode, npmrc?: string): Promise<void>;
+  install(
+    deploymentDir: string,
+    mode: InstallMode,
+    npmrc?: string,
+    policies?: InstallPolicies,
+  ): Promise<void>;
 }
 
 /** npm CLI arguments per install mode. */
@@ -20,13 +30,25 @@ const NPM_ARGS: Record<Exclude<InstallMode, "none">, string[]> = {
 export class NpmInstaller implements InstallerAdapter {
   readonly name = "npm";
 
-  async install(deploymentDir: string, mode: InstallMode, npmrc?: string): Promise<void> {
+  async install(
+    deploymentDir: string,
+    mode: InstallMode,
+    npmrc?: string,
+    policies?: InstallPolicies,
+  ): Promise<void> {
     if (mode === "none") {
       return;
     }
     // execa resolves `npm`/`npm.cmd` across platforms without a shell, and
     // throws a descriptive error on a non-zero exit code.
-    const args = npmrc ? [...NPM_ARGS[mode], "--userconfig", npmrc] : NPM_ARGS[mode];
+    const args = [...NPM_ARGS[mode]];
+    if (npmrc) {
+      args.push("--userconfig", npmrc);
+    }
+    if (policies) {
+      args.push(policies.includeDevDependencies ? "--include=dev" : "--omit=dev");
+      args.push(policies.includeOptionalDependencies ? "--include=optional" : "--omit=optional");
+    }
     await execa("npm", args, { cwd: deploymentDir, stdio: "inherit" });
   }
 }
